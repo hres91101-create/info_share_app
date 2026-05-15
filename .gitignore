@@ -1,0 +1,18 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+
+# Build intermediates inside platform folders
+android/.gradle/
+android/app/build/
+ios/Pods/
+ios/.symlinks/
+
+# IDE
+.idea/
+*.iml
+.vscode/

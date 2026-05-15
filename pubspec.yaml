@@ -1,0 +1,20 @@
+name: info_share_app
+description: 防御塔攻略分享 — Android/iOS 客户端（悬浮按钮 + 网站数据互动）
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  flutter_overlay_window: ^0.4.5
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
