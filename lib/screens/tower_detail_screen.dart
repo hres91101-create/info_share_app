@@ -87,6 +87,30 @@ class _TowerDetailScreenState extends State<TowerDetailScreen> {
     return '${two(d.month)}/${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
   }
 
+  // Unified action button (matches the overlay): navy + white, equal width.
+  Widget _btn(String label, VoidCallback? onTap) {
+    return Expanded(
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF1E2A47),
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: const Color(0xFF1E2A47).withOpacity(0.4),
+          disabledForegroundColor: Colors.white70,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+        ),
+        onPressed: onTap,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(label,
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w700)),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -183,59 +207,30 @@ class _TowerDetailScreenState extends State<TowerDetailScreen> {
               SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(10),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _busy ? null : _writeNote,
-                            icon: const Icon(Icons.edit),
-                            label: const Text('写笔记'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF7C3AED)),
-                            onPressed: _busy ? null : _uploadImages,
-                            icon: const Icon(Icons.add_photo_alternate),
-                            label: const Text('上传图片'),
-                          ),
-                        ),
-                      ]),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: d.locked
-                            ? OutlinedButton.icon(
-                                onPressed: _busy
-                                    ? null
-                                    : () => _runAction(
-                                        () => Api.unlockTower(
-                                            widget.towerId, widget.name),
-                                        '已解锁'),
-                                icon: const Icon(Icons.lock_open),
-                                label: const Text('解锁'),
-                              )
-                            : ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                    backgroundColor:
-                                        const Color(0xFFDC2626)),
-                                onPressed: _busy
-                                    ? null
-                                    : () => _runAction(
-                                        () => Api.lockTower(
-                                            widget.towerId, widget.name),
-                                        '已锁定（30 分钟）'),
-                                icon:
-                                    const Icon(Icons.local_fire_department),
-                                label: const Text('进攻锁定'),
-                              ),
-                      ),
-                    ],
-                  ),
+                  // Three equal-width buttons in ONE row, same unified style
+                  // as the overlay. Lock ↔ unlock toggles with d.locked
+                  // (the future reloads after every action).
+                  child: Row(children: [
+                    d.locked
+                        ? _btn('解锁',
+                            _busy
+                                ? null
+                                : () => _runAction(
+                                    () => Api.unlockTower(
+                                        widget.towerId, widget.name),
+                                    '已解锁'))
+                        : _btn('上锁',
+                            _busy
+                                ? null
+                                : () => _runAction(
+                                    () => Api.lockTower(
+                                        widget.towerId, widget.name),
+                                    '已锁定（30 分钟）')),
+                    const SizedBox(width: 8),
+                    _btn('写笔记', _busy ? null : _writeNote),
+                    const SizedBox(width: 8),
+                    _btn('上传图片', _busy ? null : _uploadImages),
+                  ]),
                 ),
               ),
             ],
