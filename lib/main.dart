@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' show min;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -255,12 +257,12 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     try {
       await FlutterOverlayWindow.showOverlay(
         enableDrag: true,
-        // Spawn AT the right edge instead of the plugin's default centre
-        // (alignment defaults to OverlayAlignment.center — that is why the
-        // bubble sits on the vertical centre line; nothing in our code puts
-        // it there). positionGravity.auto then handles drag + edge snap.
         alignment: OverlayAlignment.centerRight,
-        positionGravity: PositionGravity.auto,
+        // none = plugin does NOT auto-reposition; it only follows the finger
+        // (enableDrag). We do our own 4-edge snap in Dart (see
+        // _OverlayBubbleState: poll position, on release glide to the nearest
+        // safe edge). auto/left/right would fight our snap.
+        positionGravity: PositionGravity.none,
         overlayTitle: '防御塔攻略',
         overlayContent: '点击看最新图文',
         flag: OverlayFlag.defaultFlag,
@@ -544,21 +546,117 @@ class _OverlayBubble extends StatefulWidget {
   State<_OverlayBubble> createState() => _OverlayBubbleState();
 }
 
-class _OverlayBubbleState extends State<_OverlayBubble> {
+class _OverlayBubbleState extends State<_OverlayBubble>
+    with SingleTickerProviderStateMixin {
   bool _expanded = false;
+
+  // --- 4-edge snap (Dart-side; plugin only follows the finger) ---
+  Timer? _poll;
+  late final AnimationController _snapCtrl =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
+  Offset? _lastPos; // last observed window pos (plugin px)
+  bool _moved = false; // user dragged since last rest
+  bool _snapping = false; // our glide animation is running
+  bool _busyTick = false;
 
   ui.FlutterView get _view =>
       WidgetsBinding.instance.platformDispatcher.views.first;
 
-  // NOTE: deliberately NO WidgetsBindingObserver / didChangeMetrics here.
-  // Calling resizeOverlay/moveOverlay from didChangeMetrics caused an
-  // infinite resize→metrics→resize loop (the violent never-settling shake).
-  // _fillScreen() is invoked exactly once, from _expand().
+  @override
+  void initState() {
+    super.initState();
+    _poll = Timer.periodic(const Duration(milliseconds: 150), _tick);
+  }
 
-  /// Make the overlay window cover the whole device screen AND sit at the
-  /// screen origin. resizeOverlay alone keeps the window at the bubble's
-  /// dragged position, so a full-size window spills off-screen — we must also
-  /// moveOverlay to (0,0). Called once per expand (never re-entrantly).
+  @override
+  void dispose() {
+    _poll?.cancel();
+    _snapCtrl.dispose();
+    super.dispose();
+  }
+
+  // Screen + bubble metrics in the plugin's coordinate space (physical px —
+  // flutter_overlay_window uses raw WindowManager coords).
+  double get _dpr => _view.devicePixelRatio;
+  Size get _screen => _view.physicalSize;
+  double get _bubble => 60 * _dpr;
+  double get _margin => 10 * _dpr; // the "safety line" inset
+
+  Future<void> _tick(Timer _) async {
+    if (_expanded || _snapping || _busyTick || _snapCtrl.isAnimating) return;
+    _busyTick = true;
+    try {
+      final p = await FlutterOverlayWindow.getOverlayPosition();
+      final cur = Offset((p.x ?? 0).toDouble(), (p.y ?? 0).toDouble());
+      if (_lastPos == null) {
+        _lastPos = cur;
+        await _snapToNearest(cur); // dock on an edge from the start
+        return;
+      }
+      if ((cur - _lastPos!).distance > 2) {
+        // still being dragged
+        _moved = true;
+        _lastPos = cur;
+      } else if (_moved) {
+        // released after a drag → glide to nearest safe edge
+        _moved = false;
+        await _snapToNearest(cur);
+      }
+    } catch (_) {
+      // getOverlayPosition unsupported / overlay gone — just stop trying
+      _poll?.cancel();
+    } finally {
+      _busyTick = false;
+    }
+  }
+
+  Future<void> _snapToNearest(Offset cur) async {
+    final s = _screen;
+    final b = _bubble;
+    final m = _margin;
+    double clampD(double v, double lo, double hi) =>
+        hi <= lo ? lo : v.clamp(lo, hi);
+    final minX = m, maxX = s.width - b - m;
+    final minY = m, maxY = s.height - b - m;
+    final cx = cur.dx + b / 2, cy = cur.dy + b / 2;
+    final dL = cx, dR = s.width - cx, dT = cy, dB = s.height - cy;
+    final nearest = [dL, dR, dT, dB].reduce(min);
+    double tx = clampD(cur.dx, minX, maxX);
+    double ty = clampD(cur.dy, minY, maxY);
+    if (nearest == dL) {
+      tx = minX;
+    } else if (nearest == dR) {
+      tx = maxX;
+    } else if (nearest == dT) {
+      ty = minY;
+    } else {
+      ty = maxY;
+    }
+    final to = Offset(tx, ty);
+    if ((to - cur).distance < 1) {
+      _lastPos = to;
+      return;
+    }
+    _snapping = true;
+    final curve =
+        CurvedAnimation(parent: _snapCtrl, curve: Curves.easeOutCubic);
+    void onTick() {
+      final pos = Offset.lerp(cur, to, curve.value)!;
+      FlutterOverlayWindow.moveOverlay(OverlayPosition(pos.dx, pos.dy));
+    }
+
+    _snapCtrl
+      ..reset()
+      ..addListener(onTick);
+    try {
+      await _snapCtrl.forward();
+    } catch (_) {}
+    _snapCtrl.removeListener(onTick);
+    _snapping = false;
+    _lastPos = to;
+  }
+
+  /// Cover the whole device screen AND sit at the screen origin.
   Future<void> _fillScreen() async {
     await FlutterOverlayWindow.resizeOverlay(
         WindowSize.matchParent, WindowSize.matchParent, false);
@@ -570,8 +668,6 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
   Future<void> _expand() async {
     setState(() => _expanded = true);
     await _fillScreen();
-    // Make the expanded panel focusable so the 写笔记 TextField can get the
-    // keyboard (a defaultFlag overlay is non-focusable → no keyboard).
     try {
       await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
     } catch (_) {}
@@ -582,11 +678,10 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
     try {
       await FlutterOverlayWindow.updateFlag(OverlayFlag.defaultFlag);
     } catch (_) {}
-    // Back to a small, still-draggable bubble. Do NOT manually moveOverlay
-    // here — that physical-px move was flinging the small bubble off-screen
-    // (the "minimize makes it disappear" bug). positionGravity.auto snaps it
-    // back onto the nearest screen edge automatically and keeps it on-screen.
     await FlutterOverlayWindow.resizeOverlay(60, 60, true);
+    // Force a re-dock on the next poll tick so it returns to a safe edge.
+    _lastPos = null;
+    _moved = false;
   }
 
   @override
@@ -639,59 +734,67 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
             ),
           ),
           Center(
-            child: SizedBox(
-              width: cardW,
-              height: cardH,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withOpacity(0.4),
-                        blurRadius: 18,
-                        offset: const Offset(0, 6)),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    Container(
-                      color: const Color(0xFF1E2A47),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      child: Row(children: [
-                        const Icon(Icons.shield,
-                            color: Colors.white, size: 16),
-                        const SizedBox(width: 6),
-                        const Expanded(
-                          child: Text('最新动态',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                        InkWell(
-                          onTap: _collapse,
-                          child: const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(Icons.remove,
-                                color: Colors.white, size: 20),
+            child: SafeArea(
+              child: SizedBox(
+                width: cardW,
+                height: cardH,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 18,
+                          offset: const Offset(0, 6)),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      Container(
+                        color: const Color(0xFF1E2A47),
+                        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+                        child: Row(children: [
+                          const Icon(Icons.shield,
+                              color: Colors.white, size: 18),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text('最新动态',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold)),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        InkWell(
-                          onTap: () => FlutterOverlayWindow.closeOverlay(),
-                          child: const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: Icon(Icons.close,
-                                color: Colors.white, size: 20),
+                          // Big tap targets — the old ones were tiny and the
+                          // user kept hitting the screen-edge system gesture
+                          // instead of ✕.
+                          InkWell(
+                            onTap: _collapse,
+                            borderRadius: BorderRadius.circular(24),
+                            child: const SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: Icon(Icons.remove,
+                                  color: Colors.white, size: 26),
+                            ),
                           ),
-                        ),
-                      ]),
-                    ),
-                    const Expanded(child: OverlayBrowser()),
-                  ],
+                          const SizedBox(width: 4),
+                          InkWell(
+                            onTap: () => FlutterOverlayWindow.closeOverlay(),
+                            borderRadius: BorderRadius.circular(24),
+                            child: const SizedBox(
+                              width: 48,
+                              height: 48,
+                              child: Icon(Icons.close,
+                                  color: Colors.white, size: 28),
+                            ),
+                          ),
+                        ]),
+                      ),
+                      const Expanded(child: OverlayBrowser()),
+                    ],
+                  ),
                 ),
               ),
             ),

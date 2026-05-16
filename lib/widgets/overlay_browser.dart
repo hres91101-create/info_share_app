@@ -198,6 +198,35 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
     return ZoneMapView(onTapTower: _openTower);
   }
 
+  Widget _actionBtn(String label, Color bg, VoidCallback? onTap) {
+    return Expanded(
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: bg,
+          foregroundColor: Colors.white, // readable on the coloured bg
+          disabledBackgroundColor: bg.withOpacity(0.4),
+          disabledForegroundColor: Colors.white70,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: onTap,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(label,
+              style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _overlayLock() async {
+    if (_towerId == null) return;
+    await _doAction(
+        () => Api.lockTower(_towerId!, _name), '已锁定（30 分钟）');
+  }
+
   Widget _towerDetail() {
     return Column(
       children: [
@@ -207,23 +236,14 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
           child: Padding(
             padding: const EdgeInsets.all(8),
             child: Row(children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _busy ? null : _overlayWriteNote,
-                  icon: const Icon(Icons.edit, size: 18),
-                  label: const Text('写笔记'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF7C3AED)),
-                  onPressed: _busy ? null : _overlayUploadImages,
-                  icon: const Icon(Icons.add_photo_alternate, size: 18),
-                  label: const Text('上传图片'),
-                ),
-              ),
+              _actionBtn('上锁', const Color(0xFFDC2626),
+                  _busy ? null : _overlayLock),
+              const SizedBox(width: 6),
+              _actionBtn('写笔记', const Color(0xFF2563EB),
+                  _busy ? null : _overlayWriteNote),
+              const SizedBox(width: 6),
+              _actionBtn('上传图片', const Color(0xFF7C3AED),
+                  _busy ? null : _overlayUploadImages),
             ]),
           ),
         ),
