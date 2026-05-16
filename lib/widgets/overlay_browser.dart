@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import '../services/api.dart';
 import '../services/prefs.dart';
 import 'recent_feed.dart';
@@ -18,6 +17,7 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
   int _view = 0; // 0 = maps, 1 = recent feed
   int? _towerId;
   Future<TowerDetail>? _detailF;
+  TowerDetail? _td; // cached so the action bar knows lock state
   String _name = '队友';
 
   @override
@@ -30,14 +30,26 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
     });
   }
 
-  void _openTower(int id) => setState(() {
-        _towerId = id;
-        _detailF = Api.fetchTowerDetail(id);
-      });
+  void _loadDetail(int id) {
+    final f = Api.fetchTowerDetail(id);
+    _detailF = f;
+    _td = null;
+    f.then((d) {
+      if (mounted) setState(() => _td = d);
+    }).catchError((_) {});
+  }
+
+  void _openTower(int id) {
+    setState(() {
+      _towerId = id;
+      _loadDetail(id);
+    });
+  }
 
   void _back() => setState(() {
         _towerId = null;
         _detailF = null;
+        _td = null;
       });
 
   bool _busy = false;
@@ -61,7 +73,7 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
     try {
       await fn();
       if (_towerId != null && mounted) {
-        setState(() => _detailF = Api.fetchTowerDetail(_towerId!));
+        setState(() => _loadDetail(_towerId!));
       }
       await _toast(ok);
     } catch (e) {
@@ -99,22 +111,6 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         () => Api.postNote(_towerId!, _name, text), '已送出');
   }
 
-  Future<void> _overlayUploadImages() async {
-    if (_towerId == null) return;
-    List<XFile> picked;
-    try {
-      picked = await ImagePicker().pickMultiImage(imageQuality: 85);
-    } catch (e) {
-      await _toast('悬浮窗内无法打开相册（Android 限制）。\n请到 App 内的这座塔上传图片。');
-      return;
-    }
-    if (picked.isEmpty) return;
-    await _doAction(
-      () => Api.uploadImages(
-          _towerId!, _name, picked.map((x) => x.path).toList()),
-      '已上传 ${picked.length} 张图片',
-    );
-  }
 
   String _fmt(int ts) {
     final d = DateTime.fromMillisecondsSinceEpoch(ts);
@@ -234,6 +230,12 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         () => Api.lockTower(_towerId!, _name), '已锁定（30 分钟）');
   }
 
+  Future<void> _overlayUnlock() async {
+    if (_towerId == null) return;
+    await _doAction(
+        () => Api.unlockTower(_towerId!, _name), '已解锁');
+  }
+
   Widget _towerDetail() {
     return Column(
       children: [
@@ -242,12 +244,15 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
           top: false,
           child: Padding(
             padding: const EdgeInsets.all(8),
+            // 上传图片 intentionally NOT here: a Service-hosted overlay has no
+            // Activity, so the system gallery picker can't return images.
+            // Image upload lives in the in-app tower detail (has an Activity).
             child: Row(children: [
-              _actionBtn('上锁', _busy ? null : _overlayLock),
+              _td?.locked == true
+                  ? _actionBtn('解锁', _busy ? null : _overlayUnlock)
+                  : _actionBtn('上锁', _busy ? null : _overlayLock),
               const SizedBox(width: 8),
               _actionBtn('写笔记', _busy ? null : _overlayWriteNote),
-              const SizedBox(width: 8),
-              _actionBtn('上传图片', _busy ? null : _overlayUploadImages),
             ]),
           ),
         ),

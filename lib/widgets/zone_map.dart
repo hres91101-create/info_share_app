@@ -193,26 +193,43 @@ class _HotspotMapState extends State<HotspotMap> {
                     child: Container(
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: ring.withOpacity(0.45),
-                        border: Border.all(color: ring, width: 1.5),
+                        color: ring.withOpacity(hp.locked ? 0.55 : 0.45),
+                        border: Border.all(
+                            color: ring, width: hp.locked ? 3 : 1.5),
+                        boxShadow: hp.locked
+                            ? [
+                                BoxShadow(
+                                    color: const Color(0xFFDC2626)
+                                        .withOpacity(0.7),
+                                    blurRadius: d * 0.18,
+                                    spreadRadius: d * 0.02),
+                              ]
+                            : null,
                       ),
                       child: Center(
                         child: Container(
                           width: innerD,
                           height: innerD,
-                          decoration: const BoxDecoration(
+                          decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Color(0xCC000000),
+                            color: hp.locked
+                                ? const Color(0xCC7F1D1D)
+                                : const Color(0xCC000000),
                           ),
                           alignment: Alignment.center,
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Padding(
                               padding: const EdgeInsets.all(2),
-                              child: Text('${hp.towerId}',
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold)),
+                              // Locked = "in battle": show the 🔥⚔ icon like
+                              // the website (it hides the number when locked).
+                              child: hp.locked
+                                  ? const Text('🔥',
+                                      style: TextStyle(height: 1))
+                                  : Text('${hp.towerId}',
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ),

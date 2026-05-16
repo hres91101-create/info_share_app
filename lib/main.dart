@@ -254,6 +254,19 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
 
   Future<void> _startOverlay() async {
     try {
+      // Re-showing too soon after a close spawns a half-initialised overlay
+      // (the "empty toast, no bubble/functions" bug). Tear any old one down
+      // fully and let the plugin's engine settle before re-creating.
+      bool active = false;
+      try {
+        active = await FlutterOverlayWindow.isActive();
+      } catch (_) {}
+      if (active) {
+        await FlutterOverlayWindow.closeOverlay();
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      } else {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
       await FlutterOverlayWindow.showOverlay(
         enableDrag: true,
         alignment: OverlayAlignment.centerRight,
@@ -313,11 +326,8 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
   /// Recover a bubble that got dragged off-screen / lost: tear it down and
   /// re-create it at the plugin's default on-screen position.
   Future<void> _resetOverlay() async {
-    try {
-      if (await FlutterOverlayWindow.isActive()) {
-        await FlutterOverlayWindow.closeOverlay();
-      }
-    } catch (_) {}
+    // _startOverlay already closes any old overlay + waits for the engine to
+    // settle before re-creating, so the re-placed bubble keeps its content.
     await _startOverlay();
     if (!mounted) return;
     setState(() => _active = true);
