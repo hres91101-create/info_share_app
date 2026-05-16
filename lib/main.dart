@@ -45,16 +45,31 @@ class _Gate extends StatefulWidget {
   State<_Gate> createState() => _GateState();
 }
 
-class _GateState extends State<_Gate> {
+class _GateState extends State<_Gate> with WidgetsBindingObserver {
   String? _name;
   bool _loading = true;
 
-  bool _updateChecked = false;
+  bool _checking = false;
+  bool _dialogOpen = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check whenever the app comes back to the foreground, not only on a
+    // cold start — "关掉再重开" often just resumes the existing process.
+    if (state == AppLifecycleState.resumed) _maybePromptUpdate();
   }
 
   Future<void> _load() async {
@@ -66,11 +81,13 @@ class _GateState extends State<_Gate> {
   }
 
   Future<void> _maybePromptUpdate() async {
-    if (_updateChecked) return;
-    _updateChecked = true;
     if (!Platform.isAndroid) return; // ota apk install is Android-only
+    if (_checking || _dialogOpen || _name == null || !mounted) return;
+    _checking = true;
     final info = await Updater.check();
-    if (info == null || !mounted) return;
+    _checking = false;
+    if (info == null || !mounted || _dialogOpen) return;
+    _dialogOpen = true;
     await showDialog(
       context: context,
       barrierDismissible: false,
@@ -108,6 +125,7 @@ class _GateState extends State<_Gate> {
         ],
       ),
     );
+    _dialogOpen = false;
   }
 
   @override
