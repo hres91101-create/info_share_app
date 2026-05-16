@@ -254,7 +254,10 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     try {
       await FlutterOverlayWindow.showOverlay(
         enableDrag: true,
-        positionGravity: PositionGravity.auto, // snap to nearest side edge
+        // `auto` was forcing the bubble back toward the horizontal centre and
+        // fighting drags. `none` = native drag, stays exactly where dropped,
+        // so the user can place it at ANY of the four edges themselves.
+        positionGravity: PositionGravity.none,
         overlayTitle: '防御塔攻略',
         overlayContent: '点击看最新图文',
         flag: OverlayFlag.defaultFlag,

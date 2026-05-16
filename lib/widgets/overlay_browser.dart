@@ -2,37 +2,43 @@ import 'package:flutter/material.dart';
 import '../services/api.dart';
 import 'recent_feed.dart';
 
-/// Template for the in-overlay browser (point #3): instead of only the recent
-/// feed, the user picks a tower (grid of tappable buttons, mirroring the
-/// website's tower list) and views that tower's notes/images, OR switches to
-/// the cross-tower 最新动态. Pure Flutter (no PlatformView) so it renders
-/// reliably inside the system overlay window.
+/// In-overlay browser: the real 3-zone maps with clickable hotspot buttons
+/// (mirrors the website exactly — same /api/pages data + positioning math),
+/// plus a 最新动态 tab. Tap a hotspot → that tower's notes/images.
+/// Pure Flutter (no PlatformView) so it renders inside the system overlay.
 class OverlayBrowser extends StatefulWidget {
   const OverlayBrowser({super.key});
-
   @override
   State<OverlayBrowser> createState() => _OverlayBrowserState();
 }
 
 class _OverlayBrowserState extends State<OverlayBrowser> {
-  // view: 0 = tower grid, 1 = recent feed
-  int _view = 0;
-  int? _towerId; // non-null → showing a single tower's detail
-  late Future<List<Tower>> _towersF;
+  int _view = 0; // 0 = maps, 1 = recent feed
+  int _pageIdx = 0;
+  int? _towerId;
   Future<TowerDetail>? _detailF;
+
+  late Future<_MapData> _mapF;
 
   @override
   void initState() {
     super.initState();
-    _towersF = Api.fetchTowers();
+    _mapF = _loadMap();
   }
 
-  void _openTower(int id) {
-    setState(() {
-      _towerId = id;
-      _detailF = Api.fetchTowerDetail(id);
-    });
+  Future<_MapData> _loadMap() async {
+    final results = await Future.wait([
+      Api.fetchPages(),
+      Api.fetchSettings(),
+    ]);
+    return _MapData(results[0] as List<PageData>,
+        results[1] as HotspotSettings);
   }
+
+  void _openTower(int id) => setState(() {
+        _towerId = id;
+        _detailF = Api.fetchTowerDetail(id);
+      });
 
   void _back() => setState(() {
         _towerId = null;
@@ -67,12 +73,7 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _toolbar(),
-        Expanded(child: _body()),
-      ],
-    );
+    return Column(children: [_toolbar(), Expanded(child: _body())]);
   }
 
   Widget _toolbar() {
@@ -82,9 +83,8 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, size: 20),
-            onPressed: _back,
-          ),
+              icon: const Icon(Icons.arrow_back, size: 20),
+              onPressed: _back),
           Text('塔 $_towerId',
               style: const TextStyle(fontWeight: FontWeight.bold)),
         ]),
@@ -117,19 +117,19 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
 
     return Container(
       color: const Color(0xFFF3F4F6),
-      child: Row(children: [tab('选塔', 0), tab('最新动态', 1)]),
+      child: Row(children: [tab('地图选塔', 0), tab('最新动态', 1)]),
     );
   }
 
   Widget _body() {
     if (_towerId != null) return _towerDetail();
     if (_view == 1) return const RecentFeed(compact: true);
-    return _towerGrid();
+    return _maps();
   }
 
-  Widget _towerGrid() {
-    return FutureBuilder<List<Tower>>(
-      future: _towersF,
+  Widget _maps() {
+    return FutureBuilder<_MapData>(
+      future: _mapF,
       builder: (ctx, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -137,75 +137,56 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         if (snap.hasError) {
           return Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('读取失败：${snap.error}'),
+              Text('地图读取失败：${snap.error}', textAlign: TextAlign.center),
               TextButton(
-                onPressed: () =>
-                    setState(() => _towersF = Api.fetchTowers()),
-                child: const Text('重试'),
-              ),
+                  onPressed: () => setState(() => _mapF = _loadMap()),
+                  child: const Text('重试')),
             ]),
           );
         }
-        final towers = (snap.data ?? []).where((t) => !t.hidden).toList()
-          ..sort((a, b) => a.id.compareTo(b.id));
-        if (towers.isEmpty) {
-          return const Center(child: Text('暂无塔'));
+        final data = snap.data!;
+        final pages = data.pages;
+        if (pages.isEmpty) {
+          return const Center(child: Text('管理员还没设置地图'));
         }
-        return GridView.builder(
-          padding: const EdgeInsets.all(8),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 150,
-            mainAxisExtent: 64,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-          ),
-          itemCount: towers.length,
-          itemBuilder: (c, i) {
-            final t = towers[i];
-            final locked = t.locked;
-            return InkWell(
-              onTap: () => _openTower(t.id),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color:
-                      locked ? const Color(0xFFFEF2F2) : Colors.white,
-                  border: Border.all(
-                      color: locked
-                          ? const Color(0xFFFCA5A5)
-                          : const Color(0xFFE5E7EB)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      t.name != null && t.name!.isNotEmpty
-                          ? '${t.id}. ${t.name}'
-                          : '塔 ${t.id}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: Color(0xFF1F2937)),
+        final idx = _pageIdx.clamp(0, pages.length - 1);
+        final page = pages[idx];
+        return Column(
+          children: [
+            // zone selector
+            SizedBox(
+              height: 42,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                itemCount: pages.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (c, i) {
+                  final on = i == idx;
+                  return Center(
+                    child: ChoiceChip(
+                      label: Text(pages[i].name),
+                      selected: on,
+                      onSelected: (_) => setState(() => _pageIdx = i),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        if (t.noteCount > 0) '笔记${t.noteCount}',
-                        if (t.imageCount > 0) '图${t.imageCount}',
-                        if (locked) '🔥战斗中',
-                      ].join('  '),
-                      style: const TextStyle(
-                          fontSize: 11, color: Color(0xFF6B7280)),
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
-            );
-          },
+            ),
+            Expanded(
+              child: page.imagePath == null
+                  ? const Center(child: Text('这个城区还没有地图图片'))
+                  : InteractiveViewer(
+                      minScale: 1,
+                      maxScale: 4,
+                      child: _HotspotMap(
+                        page: page,
+                        settings: data.settings,
+                        onTapTower: _openTower,
+                      ),
+                    ),
+            ),
+          ],
         );
       },
     );
@@ -223,12 +204,12 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         }
         final d = snap.data!;
         final items = <_E>[
-          ...d.notes.map((n) =>
-              _E(n.createdAt, n.author, '笔记', n.content, null)),
-          ...d.images.map((im) =>
-              _E(im.createdAt, im.author, '图', im.caption, im.filePath)),
+          ...d.notes
+              .map((n) => _E(n.createdAt, n.author, '笔记', n.content, null)),
+          ...d.images.map(
+              (im) => _E(im.createdAt, im.author, '图', im.caption, im.filePath)),
         ]..sort((a, b) => a.at.compareTo(b.at));
-        if (items.isEmpty) {
+        if (items.isEmpty && !d.locked) {
           return const Center(child: Text('这座塔暂无笔记或图片'));
         }
         return ListView.separated(
@@ -268,8 +249,8 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
                             : const Color(0xFFD1FAE5),
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: Text(e.kind,
-                          style: const TextStyle(fontSize: 10)),
+                      child:
+                          Text(e.kind, style: const TextStyle(fontSize: 10)),
                     ),
                     const SizedBox(width: 6),
                     Text(e.author,
@@ -277,8 +258,8 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
                             fontSize: 12, fontWeight: FontWeight.w600)),
                     const Spacer(),
                     Text(_fmt(e.at),
-                        style: const TextStyle(
-                            fontSize: 10, color: Colors.grey)),
+                        style:
+                            const TextStyle(fontSize: 10, color: Colors.grey)),
                   ]),
                   if (e.img != null) ...[
                     const SizedBox(height: 6),
@@ -305,6 +286,154 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
       },
     );
   }
+}
+
+/// Renders one zone's map image with circular hotspot buttons positioned
+/// exactly like the website: leftPct = 50 + (x-50)*scaleX + offsetX,
+/// topPct = y; circle diameter = outerPct% of the image WIDTH.
+class _HotspotMap extends StatefulWidget {
+  final PageData page;
+  final HotspotSettings settings;
+  final void Function(int towerId) onTapTower;
+  const _HotspotMap({
+    required this.page,
+    required this.settings,
+    required this.onTapTower,
+  });
+  @override
+  State<_HotspotMap> createState() => _HotspotMapState();
+}
+
+class _HotspotMapState extends State<_HotspotMap> {
+  double? _aspect; // width / height
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HotspotMap old) {
+    super.didUpdateWidget(old);
+    if (old.page.imagePath != widget.page.imagePath) {
+      _aspect = null;
+      _resolve();
+    }
+  }
+
+  void _resolve() {
+    final src = widget.page.imagePath;
+    if (src == null) return;
+    final img = NetworkImage(src);
+    final stream = img.resolve(const ImageConfiguration());
+    late final ImageStreamListener l;
+    l = ImageStreamListener((info, _) {
+      if (mounted) {
+        setState(() => _aspect =
+            info.image.width / info.image.height);
+      }
+      stream.removeListener(l);
+    }, onError: (_, __) {
+      if (mounted) setState(() => _aspect = 16 / 9);
+      stream.removeListener(l);
+    });
+    stream.addListener(l);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final src = widget.page.imagePath!;
+    if (_aspect == null) {
+      return const SizedBox(
+          height: 200, child: Center(child: CircularProgressIndicator()));
+    }
+    final s = widget.settings;
+    final offsetX = widget.page.offsetXPct;
+    final scaleX = widget.page.scaleX;
+    final spots = widget.page.hotspots.where((h) => !h.hidden).toList();
+
+    return AspectRatio(
+      aspectRatio: _aspect!,
+      child: LayoutBuilder(
+        builder: (ctx, c) {
+          final w = c.maxWidth;
+          final h = c.maxHeight;
+          final d = s.outerPct / 100.0 * w; // outer circle diameter
+          final innerD = (s.innerPct / s.outerPct) * d;
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: Image.network(src,
+                    fit: BoxFit.fill,
+                    errorBuilder: (a, b, cc) =>
+                        const Center(child: Text('地图加载失败'))),
+              ),
+              ...spots.map((hp) {
+                final leftPct =
+                    50 + (hp.xPct - 50) * scaleX + offsetX;
+                final cx = leftPct / 100.0 * w;
+                final cy = hp.yPct / 100.0 * h;
+                final Color ring;
+                if (hp.locked) {
+                  ring = const Color(0xFFDC2626);
+                } else if (hp.hasContent) {
+                  ring = const Color(0xFF10B981);
+                } else {
+                  ring = const Color(0xFFF59E0B);
+                }
+                return Positioned(
+                  left: cx - d / 2,
+                  top: cy - d / 2,
+                  width: d,
+                  height: d,
+                  child: GestureDetector(
+                    onTap: () => widget.onTapTower(hp.towerId),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: ring.withOpacity(0.45),
+                        border: Border.all(color: ring, width: 1.5),
+                      ),
+                      child: Center(
+                        child: Container(
+                          width: innerD,
+                          height: innerD,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xCC000000),
+                          ),
+                          alignment: Alignment.center,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: Text(
+                                '${hp.towerId}',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MapData {
+  final List<PageData> pages;
+  final HotspotSettings settings;
+  _MapData(this.pages, this.settings);
 }
 
 class _E {

@@ -16,6 +16,32 @@ class Api {
     return list.map((e) => Tower.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  static Future<HotspotSettings> fetchSettings() async {
+    try {
+      final r = await http.get(Uri.parse('$baseUrl/api/settings'));
+      if (r.statusCode != 200) return HotspotSettings(9, 4.5);
+      final j = jsonDecode(r.body) as Map<String, dynamic>;
+      return HotspotSettings(
+        (j['outerPct'] as num?)?.toDouble() ?? 9,
+        (j['innerPct'] as num?)?.toDouble() ?? 4.5,
+      );
+    } catch (_) {
+      return HotspotSettings(9, 4.5);
+    }
+  }
+
+  static Future<List<PageData>> fetchPages() async {
+    final r = await http.get(Uri.parse('$baseUrl/api/pages'));
+    if (r.statusCode != 200) {
+      throw ApiException('地图读取失败 (${r.statusCode})');
+    }
+    final list = jsonDecode(r.body) as List<dynamic>;
+    return list
+        .map((e) => PageData.fromJson(e as Map<String, dynamic>))
+        .toList()
+      ..sort((a, b) => a.position.compareTo(b.position));
+  }
+
   static Future<List<RecentItem>> fetchRecent({int limit = 30}) async {
     final r = await http.get(Uri.parse('$baseUrl/api/recent?limit=$limit'));
     if (r.statusCode != 200) {
@@ -153,6 +179,82 @@ class ImageItem {
         j['file_path'] as String? ?? '',
         j['caption'] as String?,
         (j['created_at'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class HotspotSettings {
+  final double outerPct;
+  final double innerPct;
+  HotspotSettings(this.outerPct, this.innerPct);
+}
+
+class Hotspot {
+  final int towerId;
+  final double xPct;
+  final double yPct;
+  final String? towerName;
+  final bool hidden;
+  final int noteCount;
+  final int imageCount;
+  final String? lockBy;
+  final int? lockUntil;
+  Hotspot({
+    required this.towerId,
+    required this.xPct,
+    required this.yPct,
+    this.towerName,
+    this.hidden = false,
+    this.noteCount = 0,
+    this.imageCount = 0,
+    this.lockBy,
+    this.lockUntil,
+  });
+  bool get locked =>
+      lockUntil != null && lockUntil! > DateTime.now().millisecondsSinceEpoch;
+  bool get hasContent => noteCount > 0 || imageCount > 0;
+  factory Hotspot.fromJson(Map<String, dynamic> j) {
+    final tw = j['tower'] as Map<String, dynamic>?;
+    return Hotspot(
+      towerId: (j['tower_id'] as num).toInt(),
+      xPct: (j['x_pct'] as num?)?.toDouble() ?? 50,
+      yPct: (j['y_pct'] as num?)?.toDouble() ?? 50,
+      towerName: tw?['name'] as String?,
+      hidden: tw?['hidden'] == true || tw?['hidden'] == 1,
+      noteCount: (tw?['note_count'] as num?)?.toInt() ?? 0,
+      imageCount: (tw?['image_count'] as num?)?.toInt() ?? 0,
+      lockBy: tw?['lock_by'] as String?,
+      lockUntil: (tw?['lock_until'] as num?)?.toInt(),
+    );
+  }
+}
+
+class PageData {
+  final int id;
+  final String name;
+  final int position;
+  final String? imagePath;
+  final double offsetXPct;
+  final double scaleX;
+  final List<Hotspot> hotspots;
+  PageData({
+    required this.id,
+    required this.name,
+    required this.position,
+    required this.imagePath,
+    required this.offsetXPct,
+    required this.scaleX,
+    required this.hotspots,
+  });
+  factory PageData.fromJson(Map<String, dynamic> j) => PageData(
+        id: (j['id'] as num).toInt(),
+        name: j['name'] as String? ?? '',
+        position: (j['position'] as num?)?.toInt() ?? 0,
+        imagePath: j['image_path'] as String?,
+        offsetXPct: (j['offset_x_pct'] as num?)?.toDouble() ?? 0,
+        scaleX: (j['scale_x'] as num?)?.toDouble() ?? 1,
+        hotspots: (j['hotspots'] as List<dynamic>? ?? [])
+            .map((e) => Hotspot.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
 
