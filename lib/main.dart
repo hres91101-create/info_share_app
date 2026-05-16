@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math' show min;
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -554,13 +553,18 @@ class _OverlayBubbleState extends State<_OverlayBubble>
   Timer? _poll;
   late final AnimationController _snapCtrl =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
-  Offset? _lastPos; // last observed window pos (plugin px)
+  Offset? _lastPos; // last observed window pos (plugin coords)
   bool _moved = false; // user dragged since last rest
   bool _snapping = false; // our glide animation is running
   bool _busyTick = false;
 
-  ui.FlutterView get _view =>
-      WidgetsBinding.instance.platformDispatcher.views.first;
+  // Self-calibrating bounds: we NEVER trust physicalSize / devicePixelRatio
+  // (the plugin's coordinate unit is version/device dependent — guessing it
+  // is exactly what was flinging the bubble off-screen). Instead we learn the
+  // usable range purely from the coordinates the plugin itself reports as the
+  // user drags. Snap targets are always inside this observed box, so the
+  // bubble can only ever be moved somewhere it has already visibly been.
+  double? _minX, _maxX, _minY, _maxY;
 
   @override
   void initState() {
@@ -575,12 +579,12 @@ class _OverlayBubbleState extends State<_OverlayBubble>
     super.dispose();
   }
 
-  // Screen + bubble metrics in the plugin's coordinate space (physical px —
-  // flutter_overlay_window uses raw WindowManager coords).
-  double get _dpr => _view.devicePixelRatio;
-  Size get _screen => _view.physicalSize;
-  double get _bubble => 60 * _dpr;
-  double get _margin => 10 * _dpr; // the "safety line" inset
+  void _observe(Offset c) {
+    _minX = _minX == null ? c.dx : min(_minX!, c.dx);
+    _maxX = _maxX == null ? c.dx : (c.dx > _maxX! ? c.dx : _maxX!);
+    _minY = _minY == null ? c.dy : min(_minY!, c.dy);
+    _maxY = _maxY == null ? c.dy : (c.dy > _maxY! ? c.dy : _maxY!);
+  }
 
   Future<void> _tick(Timer _) async {
     if (_expanded || _snapping || _busyTick || _snapCtrl.isAnimating) return;
@@ -588,50 +592,62 @@ class _OverlayBubbleState extends State<_OverlayBubble>
     try {
       final p = await FlutterOverlayWindow.getOverlayPosition();
       final cur = Offset((p.x ?? 0).toDouble(), (p.y ?? 0).toDouble());
+      _observe(cur);
       if (_lastPos == null) {
+        // First sample: no observed range yet → do NOT snap (would be a
+        // blind guess and could push it off-screen). Just start tracking.
         _lastPos = cur;
-        await _snapToNearest(cur); // dock on an edge from the start
-        return;
-      }
-      if ((cur - _lastPos!).distance > 2) {
-        // still being dragged
-        _moved = true;
+      } else if ((cur - _lastPos!).distance > 2) {
+        _moved = true; // still being dragged
         _lastPos = cur;
       } else if (_moved) {
-        // released after a drag → glide to nearest safe edge
-        _moved = false;
+        _moved = false; // released after a drag → glide to nearest edge
         await _snapToNearest(cur);
       }
     } catch (_) {
-      // getOverlayPosition unsupported / overlay gone — just stop trying
-      _poll?.cancel();
+      _poll?.cancel(); // getOverlayPosition unsupported / overlay gone
     } finally {
       _busyTick = false;
     }
   }
 
   Future<void> _snapToNearest(Offset cur) async {
-    final s = _screen;
-    final b = _bubble;
-    final m = _margin;
-    double clampD(double v, double lo, double hi) =>
-        hi <= lo ? lo : v.clamp(lo, hi);
-    final minX = m, maxX = s.width - b - m;
-    final minY = m, maxY = s.height - b - m;
-    final cx = cur.dx + b / 2, cy = cur.dy + b / 2;
-    final dL = cx, dR = s.width - cx, dT = cy, dB = s.height - cy;
-    final nearest = [dL, dR, dT, dB].reduce(min);
-    double tx = clampD(cur.dx, minX, maxX);
-    double ty = clampD(cur.dy, minY, maxY);
-    if (nearest == dL) {
-      tx = minX;
-    } else if (nearest == dR) {
-      tx = maxX;
-    } else if (nearest == dT) {
-      ty = minY;
-    } else {
-      ty = maxY;
+    if (_minX == null) return;
+    final spanX = _maxX! - _minX!;
+    final spanY = _maxY! - _minY!;
+    // Not enough drag history to know where the edges are yet — leave it.
+    if (spanX < 1 && spanY < 1) {
+      _lastPos = cur;
+      return;
     }
+    // Inset proportional to the observed range (≈8%) so the ball sits well
+    // INSIDE the screen, never half-clipped at the very edge. Purely
+    // relative → correct on any resolution / pixel density.
+    final marginX = spanX * 0.08;
+    final marginY = spanY * 0.08;
+    final loX = _minX! + marginX, hiX = _maxX! - marginX;
+    final loY = _minY! + marginY, hiY = _maxY! - marginY;
+    double clampD(double v, double lo, double hi) =>
+        hi <= lo ? (lo + hi) / 2 : v.clamp(lo, hi);
+    final dL = cur.dx - _minX!;
+    final dR = _maxX! - cur.dx;
+    final dT = cur.dy - _minY!;
+    final dB = _maxY! - cur.dy;
+    final nearest = [dL, dR, dT, dB].reduce(min);
+    double tx = clampD(cur.dx, loX, hiX);
+    double ty = clampD(cur.dy, loY, hiY);
+    if (nearest == dL) {
+      tx = loX;
+    } else if (nearest == dR) {
+      tx = hiX;
+    } else if (nearest == dT) {
+      ty = loY;
+    } else {
+      ty = hiY;
+    }
+    // Hard safety: never leave the box the bubble has actually occupied.
+    tx = tx.clamp(_minX!, _maxX!);
+    ty = ty.clamp(_minY!, _maxY!);
     final to = Offset(tx, ty);
     if ((to - cur).distance < 1) {
       _lastPos = to;
