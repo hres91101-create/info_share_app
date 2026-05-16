@@ -720,8 +720,8 @@ class _OverlayBubbleState extends State<_OverlayBubble>
     // screen so images/text are as large and clear as possible.
     final mq = MediaQuery.of(context);
     final landscape = mq.size.width > mq.size.height;
-    final cardW = mq.size.width * (landscape ? 0.82 : 0.98);
-    final cardH = mq.size.height * 0.92;
+    final cardW = mq.size.width * (landscape ? 0.9 : 1.0);
+    final cardH = mq.size.height * (landscape ? 0.96 : 0.97);
 
     return Material(
       color: Colors.transparent,

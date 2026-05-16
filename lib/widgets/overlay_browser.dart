@@ -154,10 +154,12 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: Row(children: [
           IconButton(
-              icon: const Icon(Icons.arrow_back, size: 20),
+              iconSize: 28,
+              icon: const Icon(Icons.arrow_back),
               onPressed: _back),
           Text('塔 $_towerId',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 18)),
         ]),
       );
     }
@@ -167,18 +169,19 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         child: InkWell(
           onTap: () => setState(() => _view = v),
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
+            padding: const EdgeInsets.symmetric(vertical: 16),
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
                   color: on ? const Color(0xFF1E2A47) : Colors.transparent,
-                  width: 2,
+                  width: 3,
                 ),
               ),
             ),
             child: Text(label,
                 textAlign: TextAlign.center,
                 style: TextStyle(
+                    fontSize: 16,
                     fontWeight: on ? FontWeight.bold : FontWeight.normal,
                     color: on ? const Color(0xFF1E2A47) : Colors.grey)),
           ),
@@ -198,24 +201,28 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
     return ZoneMapView(onTapTower: _openTower);
   }
 
-  Widget _actionBtn(String label, Color bg, VoidCallback? onTap) {
+  // One unified, clean colour for all three (navy brand + white text):
+  // simple, high-contrast, easy to read.
+  static const Color _btnColor = Color(0xFF1E2A47);
+
+  Widget _actionBtn(String label, VoidCallback? onTap) {
     return Expanded(
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
-          backgroundColor: bg,
-          foregroundColor: Colors.white, // readable on the coloured bg
-          disabledBackgroundColor: bg.withOpacity(0.4),
+          backgroundColor: _btnColor,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: _btnColor.withOpacity(0.4),
           disabledForegroundColor: Colors.white70,
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 18),
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8)),
+              borderRadius: BorderRadius.circular(10)),
         ),
         onPressed: onTap,
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Text(label,
               style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600)),
+                  fontSize: 16, fontWeight: FontWeight.w700)),
         ),
       ),
     );
@@ -236,14 +243,11 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
           child: Padding(
             padding: const EdgeInsets.all(8),
             child: Row(children: [
-              _actionBtn('上锁', const Color(0xFFDC2626),
-                  _busy ? null : _overlayLock),
-              const SizedBox(width: 6),
-              _actionBtn('写笔记', const Color(0xFF2563EB),
-                  _busy ? null : _overlayWriteNote),
-              const SizedBox(width: 6),
-              _actionBtn('上传图片', const Color(0xFF7C3AED),
-                  _busy ? null : _overlayUploadImages),
+              _actionBtn('上锁', _busy ? null : _overlayLock),
+              const SizedBox(width: 8),
+              _actionBtn('写笔记', _busy ? null : _overlayWriteNote),
+              const SizedBox(width: 8),
+              _actionBtn('上传图片', _busy ? null : _overlayUploadImages),
             ]),
           ),
         ),
