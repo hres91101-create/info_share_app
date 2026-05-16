@@ -6,7 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'services/prefs.dart';
 import 'services/updater.dart';
 import 'screens/tower_list_screen.dart';
-import 'widgets/recent_feed.dart';
+import 'widgets/overlay_browser.dart';
 
 void main() {
   runApp(const InfoShareApp());
@@ -470,7 +470,7 @@ class _QuickPanel extends StatelessWidget {
                         fontSize: 16, fontWeight: FontWeight.bold)),
               ]),
             ),
-            const Expanded(child: RecentFeed(compact: true)),
+            const Expanded(child: OverlayBrowser()),
             if (isAndroid)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
@@ -505,36 +505,21 @@ class _OverlayBubble extends StatefulWidget {
   State<_OverlayBubble> createState() => _OverlayBubbleState();
 }
 
-class _OverlayBubbleState extends State<_OverlayBubble>
-    with WidgetsBindingObserver {
+class _OverlayBubbleState extends State<_OverlayBubble> {
   bool _expanded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
 
   ui.FlutterView get _view =>
       WidgetsBinding.instance.platformDispatcher.views.first;
 
-  @override
-  void didChangeMetrics() {
-    // Rotation: keep the expanded panel filling the (new) screen and pinned
-    // to the screen origin.
-    if (_expanded) _fillScreen();
-  }
+  // NOTE: deliberately NO WidgetsBindingObserver / didChangeMetrics here.
+  // Calling resizeOverlay/moveOverlay from didChangeMetrics caused an
+  // infinite resize→metrics→resize loop (the violent never-settling shake).
+  // _fillScreen() is invoked exactly once, from _expand().
 
   /// Make the overlay window cover the whole device screen AND sit at the
   /// screen origin. resizeOverlay alone keeps the window at the bubble's
   /// dragged position, so a full-size window spills off-screen — we must also
-  /// moveOverlay to (0,0).
+  /// moveOverlay to (0,0). Called once per expand (never re-entrantly).
   Future<void> _fillScreen() async {
     await FlutterOverlayWindow.resizeOverlay(
         WindowSize.matchParent, WindowSize.matchParent, false);
@@ -665,7 +650,7 @@ class _OverlayBubbleState extends State<_OverlayBubble>
                         ),
                       ]),
                     ),
-                    const Expanded(child: RecentFeed(compact: true)),
+                    const Expanded(child: OverlayBrowser()),
                   ],
                 ),
               ),
