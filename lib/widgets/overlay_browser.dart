@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 import 'recent_feed.dart';
+import 'zone_map.dart';
 
-/// In-overlay browser: the real 3-zone maps with clickable hotspot buttons
-/// (mirrors the website exactly — same /api/pages data + positioning math),
-/// plus a 最新动态 tab. Tap a hotspot → that tower's notes/images.
-/// Pure Flutter (no PlatformView) so it renders inside the system overlay.
+/// In-overlay browser: shared 3-zone map + hotspots (ZoneMapView) plus a
+/// 最新动态 tab. Tap a hotspot → that tower's notes/images. Pure Flutter
+/// (no PlatformView) so it renders inside the system overlay window.
 class OverlayBrowser extends StatefulWidget {
   const OverlayBrowser({super.key});
   @override
@@ -14,26 +14,8 @@ class OverlayBrowser extends StatefulWidget {
 
 class _OverlayBrowserState extends State<OverlayBrowser> {
   int _view = 0; // 0 = maps, 1 = recent feed
-  int _pageIdx = 0;
   int? _towerId;
   Future<TowerDetail>? _detailF;
-
-  late Future<_MapData> _mapF;
-
-  @override
-  void initState() {
-    super.initState();
-    _mapF = _loadMap();
-  }
-
-  Future<_MapData> _loadMap() async {
-    final results = await Future.wait([
-      Api.fetchPages(),
-      Api.fetchSettings(),
-    ]);
-    return _MapData(results[0] as List<PageData>,
-        results[1] as HotspotSettings);
-  }
 
   void _openTower(int id) => setState(() {
         _towerId = id;
@@ -124,72 +106,7 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
   Widget _body() {
     if (_towerId != null) return _towerDetail();
     if (_view == 1) return const RecentFeed(compact: true);
-    return _maps();
-  }
-
-  Widget _maps() {
-    return FutureBuilder<_MapData>(
-      future: _mapF,
-      builder: (ctx, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('地图读取失败：${snap.error}', textAlign: TextAlign.center),
-              TextButton(
-                  onPressed: () => setState(() => _mapF = _loadMap()),
-                  child: const Text('重试')),
-            ]),
-          );
-        }
-        final data = snap.data!;
-        final pages = data.pages;
-        if (pages.isEmpty) {
-          return const Center(child: Text('管理员还没设置地图'));
-        }
-        final idx = _pageIdx.clamp(0, pages.length - 1);
-        final page = pages[idx];
-        return Column(
-          children: [
-            // zone selector
-            SizedBox(
-              height: 42,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                itemCount: pages.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (c, i) {
-                  final on = i == idx;
-                  return Center(
-                    child: ChoiceChip(
-                      label: Text(pages[i].name),
-                      selected: on,
-                      onSelected: (_) => setState(() => _pageIdx = i),
-                    ),
-                  );
-                },
-              ),
-            ),
-            Expanded(
-              child: page.imagePath == null
-                  ? const Center(child: Text('这个城区还没有地图图片'))
-                  : InteractiveViewer(
-                      minScale: 1,
-                      maxScale: 4,
-                      child: _HotspotMap(
-                        page: page,
-                        settings: data.settings,
-                        onTapTower: _openTower,
-                      ),
-                    ),
-            ),
-          ],
-        );
-      },
-    );
+    return ZoneMapView(onTapTower: _openTower);
   }
 
   Widget _towerDetail() {
@@ -206,8 +123,8 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         final items = <_E>[
           ...d.notes
               .map((n) => _E(n.createdAt, n.author, '笔记', n.content, null)),
-          ...d.images.map(
-              (im) => _E(im.createdAt, im.author, '图', im.caption, im.filePath)),
+          ...d.images.map((im) =>
+              _E(im.createdAt, im.author, '图', im.caption, im.filePath)),
         ]..sort((a, b) => a.at.compareTo(b.at));
         if (items.isEmpty && !d.locked) {
           return const Center(child: Text('这座塔暂无笔记或图片'));
@@ -258,8 +175,8 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
                             fontSize: 12, fontWeight: FontWeight.w600)),
                     const Spacer(),
                     Text(_fmt(e.at),
-                        style:
-                            const TextStyle(fontSize: 10, color: Colors.grey)),
+                        style: const TextStyle(
+                            fontSize: 10, color: Colors.grey)),
                   ]),
                   if (e.img != null) ...[
                     const SizedBox(height: 6),
@@ -286,154 +203,6 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
       },
     );
   }
-}
-
-/// Renders one zone's map image with circular hotspot buttons positioned
-/// exactly like the website: leftPct = 50 + (x-50)*scaleX + offsetX,
-/// topPct = y; circle diameter = outerPct% of the image WIDTH.
-class _HotspotMap extends StatefulWidget {
-  final PageData page;
-  final HotspotSettings settings;
-  final void Function(int towerId) onTapTower;
-  const _HotspotMap({
-    required this.page,
-    required this.settings,
-    required this.onTapTower,
-  });
-  @override
-  State<_HotspotMap> createState() => _HotspotMapState();
-}
-
-class _HotspotMapState extends State<_HotspotMap> {
-  double? _aspect; // width / height
-
-  @override
-  void initState() {
-    super.initState();
-    _resolve();
-  }
-
-  @override
-  void didUpdateWidget(covariant _HotspotMap old) {
-    super.didUpdateWidget(old);
-    if (old.page.imagePath != widget.page.imagePath) {
-      _aspect = null;
-      _resolve();
-    }
-  }
-
-  void _resolve() {
-    final src = widget.page.imagePath;
-    if (src == null) return;
-    final img = NetworkImage(src);
-    final stream = img.resolve(const ImageConfiguration());
-    late final ImageStreamListener l;
-    l = ImageStreamListener((info, _) {
-      if (mounted) {
-        setState(() => _aspect =
-            info.image.width / info.image.height);
-      }
-      stream.removeListener(l);
-    }, onError: (_, __) {
-      if (mounted) setState(() => _aspect = 16 / 9);
-      stream.removeListener(l);
-    });
-    stream.addListener(l);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final src = widget.page.imagePath!;
-    if (_aspect == null) {
-      return const SizedBox(
-          height: 200, child: Center(child: CircularProgressIndicator()));
-    }
-    final s = widget.settings;
-    final offsetX = widget.page.offsetXPct;
-    final scaleX = widget.page.scaleX;
-    final spots = widget.page.hotspots.where((h) => !h.hidden).toList();
-
-    return AspectRatio(
-      aspectRatio: _aspect!,
-      child: LayoutBuilder(
-        builder: (ctx, c) {
-          final w = c.maxWidth;
-          final h = c.maxHeight;
-          final d = s.outerPct / 100.0 * w; // outer circle diameter
-          final innerD = (s.innerPct / s.outerPct) * d;
-          return Stack(
-            children: [
-              Positioned.fill(
-                child: Image.network(src,
-                    fit: BoxFit.fill,
-                    errorBuilder: (a, b, cc) =>
-                        const Center(child: Text('地图加载失败'))),
-              ),
-              ...spots.map((hp) {
-                final leftPct =
-                    50 + (hp.xPct - 50) * scaleX + offsetX;
-                final cx = leftPct / 100.0 * w;
-                final cy = hp.yPct / 100.0 * h;
-                final Color ring;
-                if (hp.locked) {
-                  ring = const Color(0xFFDC2626);
-                } else if (hp.hasContent) {
-                  ring = const Color(0xFF10B981);
-                } else {
-                  ring = const Color(0xFFF59E0B);
-                }
-                return Positioned(
-                  left: cx - d / 2,
-                  top: cy - d / 2,
-                  width: d,
-                  height: d,
-                  child: GestureDetector(
-                    onTap: () => widget.onTapTower(hp.towerId),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: ring.withOpacity(0.45),
-                        border: Border.all(color: ring, width: 1.5),
-                      ),
-                      child: Center(
-                        child: Container(
-                          width: innerD,
-                          height: innerD,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Color(0xCC000000),
-                          ),
-                          alignment: Alignment.center,
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Padding(
-                              padding: const EdgeInsets.all(2),
-                              child: Text(
-                                '${hp.towerId}',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _MapData {
-  final List<PageData> pages;
-  final HotspotSettings settings;
-  _MapData(this.pages, this.settings);
 }
 
 class _E {

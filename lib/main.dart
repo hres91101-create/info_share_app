@@ -5,8 +5,9 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'services/prefs.dart';
 import 'services/updater.dart';
-import 'screens/tower_list_screen.dart';
+import 'screens/tower_detail_screen.dart';
 import 'widgets/overlay_browser.dart';
+import 'widgets/zone_map.dart';
 
 void main() {
   runApp(const InfoShareApp());
@@ -325,7 +326,7 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        TowerListScreen(name: widget.name),
+        _MapHome(name: widget.name),
 
         // Android: permission gate banner (only when not granted)
         if (_isAndroid && !_checking && !_granted)
@@ -419,6 +420,39 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Main-app home: the SAME 3-zone map + hotspots as the overlay, but tapping
+/// a tower opens the full TowerDetailScreen (write note / lock / unlock).
+class _MapHome extends StatelessWidget {
+  final String name;
+  const _MapHome({required this.name});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('防御塔攻略'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(
+              child: Text(name,
+                  style: const TextStyle(
+                      fontSize: 13, color: Colors.white70)),
+            ),
+          ),
+        ],
+      ),
+      body: ZoneMapView(
+        onTapTower: (id) => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TowerDetailScreen(towerId: id, name: name),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -561,7 +595,9 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
       return Material(
         color: Colors.transparent,
         child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+          // NOTE: no HitTestBehavior.opaque — opaque made Flutter's gesture
+          // arena swallow the touches the plugin's native drag needs, so the
+          // bubble couldn't be moved. deferToChild lets native drag work.
           onTap: _expand,
           child: Center(
             child: Container(
