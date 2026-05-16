@@ -14,15 +14,24 @@ PERMISSIONS = [
     "android.permission.INTERNET",
     "android.permission.SYSTEM_ALERT_WINDOW",
     "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.POST_NOTIFICATIONS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
 ]
 
+# Android 14+ REQUIRES a <property> child for a specialUse foreground
+# service, otherwise startForeground throws and the whole app crashes
+# (the "Samsung tablet won't open after granting overlay perm" bug).
 SERVICE = (
     '        <service\n'
     '            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"\n'
     '            android:exported="false"\n'
     '            android:stopWithTask="true"\n'
-    '            android:foregroundServiceType="specialUse" />\n'
+    '            android:foregroundServiceType="specialUse">\n'
+    '            <property\n'
+    '                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"\n'
+    '                android:value="floating quick-access bubble for team tower info" />\n'
+    '        </service>\n'
 )
 
 

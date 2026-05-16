@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  http_parser: ^4.0.2
   shared_preferences: ^2.3.2
   flutter_overlay_window: ^0.4.5
   package_info_plus: ^8.0.2

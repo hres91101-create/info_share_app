@@ -6,22 +6,41 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'services/prefs.dart';
 import 'services/updater.dart';
+import 'services/diag.dart';
 import 'screens/tower_detail_screen.dart';
 import 'widgets/overlay_browser.dart';
 import 'widgets/zone_map.dart';
 
 void main() {
-  runApp(const InfoShareApp());
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await Diag.init();
+    Diag.log('boot', 'app start'); // first thing — fires even if we crash next
+    FlutterError.onError = (d) {
+      FlutterError.presentError(d);
+      Diag.log('flutter_error', d.exceptionAsString());
+    };
+    runApp(const InfoShareApp());
+  }, (e, st) {
+    Diag.log('zone_error', '$e\n$st');
+  });
 }
 
 /// Separate entry point rendered INSIDE the Android system overlay window.
 /// Must be top-level and annotated so the engine can find it.
 @pragma('vm:entry-point')
 void overlayMain() {
-  runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: _OverlayBubble(),
-  ));
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await Diag.init();
+    Diag.log('overlay_main', 'overlay engine start');
+    runApp(const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: _OverlayBubble(),
+    ));
+  }, (e, st) {
+    Diag.log('overlay_zone_error', '$e\n$st');
+  });
 }
 
 class InfoShareApp extends StatelessWidget {
@@ -253,6 +272,7 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
   }
 
   Future<void> _startOverlay() async {
+    Diag.log('overlay', 'start requested');
     try {
       // Re-showing too soon after a close spawns a half-initialised overlay
       // (the "empty toast, no bubble/functions" bug). Tear any old one down
@@ -281,7 +301,10 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
         height: 60,
         width: 60,
       );
-    } catch (_) {}
+      Diag.log('overlay', 'showOverlay ok');
+    } catch (e) {
+      Diag.log('overlay_error', '$e');
+    }
   }
 
   Future<void> _syncOverlay() async {
@@ -289,15 +312,17 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
       if (mounted) setState(() => _checking = false);
       return;
     }
-    final granted = await FlutterOverlayWindow.isPermissionGranted();
-    bool active = false;
+    // IMPORTANT: never auto-start the overlay on launch/resume. Overlay +
+    // foreground-service behaviour varies wildly per OEM (Samsung/Huawei/
+    // Xiaomi…) and a failure there must NOT stop the core app from opening.
+    // The overlay only starts when the user explicitly taps the button.
+    bool granted = false, active = false;
+    try {
+      granted = await FlutterOverlayWindow.isPermissionGranted();
+    } catch (_) {}
     try {
       active = await FlutterOverlayWindow.isActive();
     } catch (_) {}
-    if (granted && !active) {
-      await _startOverlay();
-      active = true;
-    }
     if (!mounted) return;
     setState(() {
       _granted = granted;
@@ -321,6 +346,18 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     setState(() => _active = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('悬浮球已关闭')));
+  }
+
+  Future<void> _enableOverlay() async {
+    await _startOverlay();
+    if (!mounted) return;
+    bool active = false;
+    try {
+      active = await FlutterOverlayWindow.isActive();
+    } catch (_) {}
+    setState(() => _active = active);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(active ? '悬浮球已开启' : '悬浮球开启失败（此设备可能不支持）')));
   }
 
   /// Recover a bubble that got dragged off-screen / lost: tear it down and
@@ -377,8 +414,8 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
             ),
           ),
 
-        // Android: always-available controls (recover / kill the bubble even
-        // if it's stuck off-screen — no need to reboot the phone)
+        // Android: bubble controls (start when off; recover/close when on).
+        // Overlay is opt-in — the app works fully without it on any OEM.
         if (_isAndroid && !_checking && _granted)
           Positioned(
             left: 0,
@@ -388,26 +425,42 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
               top: false,
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.white),
-                      onPressed: _closeOverlay,
-                      icon: const Icon(Icons.cancel_outlined, size: 18),
-                      label: const Text('关闭悬浮球'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.white),
-                      onPressed: _resetOverlay,
-                      icon: const Icon(Icons.my_location, size: 18),
-                      label: const Text('重新放置'),
-                    ),
-                  ],
-                ),
+                child: _active
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                                backgroundColor: Colors.white),
+                            onPressed: _closeOverlay,
+                            icon:
+                                const Icon(Icons.cancel_outlined, size: 18),
+                            label: const Text('关闭悬浮球'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                                backgroundColor: Colors.white),
+                            onPressed: _resetOverlay,
+                            icon: const Icon(Icons.my_location, size: 18),
+                            label: const Text('重新放置'),
+                          ),
+                        ],
+                      )
+                    : SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF1E2A47),
+                            foregroundColor: Colors.white,
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: _enableOverlay,
+                          icon: const Icon(Icons.bubble_chart),
+                          label: const Text('开启悬浮球（浮在其他 app 上）'),
+                        ),
+                      ),
               ),
             ),
           ),

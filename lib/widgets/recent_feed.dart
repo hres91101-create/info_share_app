@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 
@@ -12,19 +13,41 @@ class RecentFeed extends StatefulWidget {
 }
 
 class _RecentFeedState extends State<RecentFeed> {
-  late Future<List<RecentItem>> _future;
+  List<RecentItem>? _items;
+  Object? _err;
+  Timer? _timer;
+
+  int get _limit => widget.compact ? 20 : 40;
 
   @override
   void initState() {
     super.initState();
-    _future = Api.fetchRecent(limit: widget.compact ? 20 : 40);
+    _load();
+    _timer = Timer.periodic(
+        const Duration(seconds: 8), (_) => _load(silent: true));
   }
 
-  void reload() {
-    setState(() {
-      _future = Api.fetchRecent(limit: widget.compact ? 20 : 40);
-    });
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
+
+  Future<void> _load({bool silent = false}) async {
+    try {
+      final r = await Api.fetchRecent(limit: _limit);
+      if (!mounted) return;
+      setState(() {
+        _items = r;
+        _err = null;
+      });
+    } catch (e) {
+      if (!mounted || silent) return;
+      setState(() => _err = e);
+    }
+  }
+
+  void reload() => _load();
 
   String _fmt(int ts) {
     final d = DateTime.fromMillisecondsSinceEpoch(ts);
@@ -72,36 +95,32 @@ class _RecentFeedState extends State<RecentFeed> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<RecentItem>>(
-      future: _future,
-      builder: (ctx, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('读取失败：${snap.error}',
-                    textAlign: TextAlign.center),
-                TextButton(onPressed: reload, child: const Text('重试')),
-              ],
-            ),
-          );
-        }
-        final items = snap.data ?? [];
-        if (items.isEmpty) {
-          return const Center(child: Text('暂无最新动态'));
-        }
-        return RefreshIndicator(
-          onRefresh: () async => reload(),
-          child: ListView.separated(
-            padding: const EdgeInsets.all(10),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (c, i) {
-              final it = items[i];
+    if (_items == null && _err != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('读取失败：$_err', textAlign: TextAlign.center),
+            TextButton(onPressed: reload, child: const Text('重试')),
+          ],
+        ),
+      );
+    }
+    if (_items == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final items = _items!;
+    if (items.isEmpty) {
+      return const Center(child: Text('暂无最新动态'));
+    }
+    return RefreshIndicator(
+      onRefresh: () async => reload(),
+      child: ListView.separated(
+        padding: const EdgeInsets.all(10),
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (c, i) {
+          final it = items[i];
               return Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -173,7 +192,5 @@ class _RecentFeedState extends State<RecentFeed> {
             },
           ),
         );
-      },
-    );
   }
 }

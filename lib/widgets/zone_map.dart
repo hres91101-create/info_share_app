@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 
@@ -20,77 +21,93 @@ class _MapData {
 
 class _ZoneMapViewState extends State<ZoneMapView> {
   int _pageIdx = 0;
-  late Future<_MapData> _mapF;
+  // Last good data kept in state so periodic refresh updates silently
+  // (no reload spinner / flicker), like the website's diff refresh.
+  _MapData? _data;
+  Object? _err;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _mapF = _load();
+    _load();
+    // Poll like the website (it softRefreshes every 5s) so lock state /
+    // who-took-what / new content stays current.
+    _timer = Timer.periodic(
+        const Duration(seconds: 8), (_) => _load(silent: true));
   }
 
-  Future<_MapData> _load() async {
-    final r = await Future.wait([Api.fetchPages(), Api.fetchSettings()]);
-    return _MapData(r[0] as List<PageData>, r[1] as HotspotSettings);
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    try {
+      final r = await Future.wait([Api.fetchPages(), Api.fetchSettings()]);
+      if (!mounted) return;
+      setState(() {
+        _data = _MapData(r[0] as List<PageData>, r[1] as HotspotSettings);
+        _err = null;
+      });
+    } catch (e) {
+      if (!mounted || silent) return; // silent poll failure → keep old data
+      setState(() => _err = e);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<_MapData>(
-      future: _mapF,
-      builder: (ctx, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text('地图读取失败：${snap.error}', textAlign: TextAlign.center),
-              TextButton(
-                  onPressed: () => setState(() => _mapF = _load()),
-                  child: const Text('重试')),
-            ]),
-          );
-        }
-        final pages = snap.data!.pages;
-        if (pages.isEmpty) {
-          return const Center(child: Text('管理员还没设置地图'));
-        }
-        final idx = _pageIdx.clamp(0, pages.length - 1);
-        final page = pages[idx];
-        return Column(
-          children: [
-            SizedBox(
-              height: 46,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                itemCount: pages.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (c, i) => Center(
-                  child: ChoiceChip(
-                    label: Text(pages[i].name),
-                    selected: i == idx,
-                    onSelected: (_) => setState(() => _pageIdx = i),
-                  ),
-                ),
+    if (_data == null && _err != null) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('地图读取失败：$_err', textAlign: TextAlign.center),
+          TextButton(onPressed: () => _load(), child: const Text('重试')),
+        ]),
+      );
+    }
+    if (_data == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final pages = _data!.pages;
+    if (pages.isEmpty) {
+      return const Center(child: Text('管理员还没设置地图'));
+    }
+    final idx = _pageIdx.clamp(0, pages.length - 1);
+    final page = pages[idx];
+    return Column(
+      children: [
+        SizedBox(
+          height: 46,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            itemCount: pages.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 6),
+            itemBuilder: (c, i) => Center(
+              child: ChoiceChip(
+                label: Text(pages[i].name),
+                selected: i == idx,
+                onSelected: (_) => setState(() => _pageIdx = i),
               ),
             ),
-            Expanded(
-              child: page.imagePath == null
-                  ? const Center(child: Text('这个城区还没有地图图片'))
-                  : InteractiveViewer(
-                      minScale: 1,
-                      maxScale: 4,
-                      child: HotspotMap(
-                        page: page,
-                        settings: snap.data!.settings,
-                        onTapTower: widget.onTapTower,
-                      ),
-                    ),
-            ),
-          ],
-        );
-      },
+          ),
+        ),
+        Expanded(
+          child: page.imagePath == null
+              ? const Center(child: Text('这个城区还没有地图图片'))
+              : InteractiveViewer(
+                  minScale: 1,
+                  maxScale: 4,
+                  child: HotspotMap(
+                    page: page,
+                    settings: _data!.settings,
+                    onTapTower: widget.onTapTower,
+                  ),
+                ),
+        ),
+      ],
     );
   }
 }

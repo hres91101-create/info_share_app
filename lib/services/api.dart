@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 
 /// Talks to the deployed info-share backend.
 /// The web app has no real auth — it just sends an `author` name string.
@@ -90,7 +91,19 @@ class Api {
           'POST', Uri.parse('$baseUrl/api/towers/$towerId/images'));
       req.fields['author'] = author;
       req.fields['caption'] = '';
-      req.files.add(await http.MultipartFile.fromPath('image', p));
+      // MultipartFile.fromPath defaults to application/octet-stream, which the
+      // server's image-mime regex rejects ("只允許上傳圖片…"). Set the real
+      // image content-type from the file extension so valid photos pass.
+      final ext = p.toLowerCase().split('.').last;
+      final sub = ext == 'png'
+          ? 'png'
+          : ext == 'gif'
+              ? 'gif'
+              : ext == 'webp'
+                  ? 'webp'
+                  : 'jpeg'; // jpg/jpeg/heic/unknown → jpeg
+      req.files.add(await http.MultipartFile.fromPath('image', p,
+          contentType: MediaType('image', sub)));
       final resp = await req.send();
       if (resp.statusCode != 200) {
         final body = await resp.stream.bytesToString();
