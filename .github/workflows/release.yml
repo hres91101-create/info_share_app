@@ -1,13 +1,16 @@
-name: 2. Build & Release APK
+name: 2. Build & Auto-Release APK
 
-# Push a tag like v0.1.0  -> builds, signs, publishes a GitHub Release with the
-#                            APK attached (this is what the in-app updater reads).
-# Manual run (workflow_dispatch) -> builds + signs, uploads APK as an artifact
-#                            only (for testing, no release).
+# Push to main      -> builds, signs, AUTO-publishes a GitHub Release tagged
+#                       b<run_number> (the in-app updater reads this; build
+#                       number is baked in so the app auto-detects newer builds).
+# Manual run         -> builds + signs, uploads APK as an artifact only
+#                       (for quick testing, no release).
+#
+# No manual version bumping or tagging. Just push code.
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -40,8 +43,8 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
-      - name: Build release APK
-        run: flutter build apk --release
+      - name: Build release APK (build number = CI run number)
+        run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: Re-sign with stable release key
         env:
@@ -73,9 +76,11 @@ jobs:
           path: info_share_app.apk
           retention-days: 14
 
-      - name: Publish GitHub Release (tag pushes)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Auto-publish GitHub Release (push to main)
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: b${{ github.run_number }}
+          name: build ${{ github.run_number }}
           files: info_share_app.apk
           generate_release_notes: true
