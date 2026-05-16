@@ -34,6 +34,9 @@ jobs:
       - name: Patch AndroidManifest (permissions + overlay service)
         run: python3 tool/patch_manifest.py
 
+      - name: Patch Gradle (force compileSdk 34 on all modules)
+        run: python3 tool/patch_gradle.py
+
       - name: Pub get
         run: flutter pub get
 
