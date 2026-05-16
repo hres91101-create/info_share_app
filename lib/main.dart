@@ -255,11 +255,11 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     try {
       await FlutterOverlayWindow.showOverlay(
         enableDrag: true,
-        // Messenger-style: drag freely, on release the plugin snaps the
-        // bubble to the nearest screen edge and keeps it on-screen — it can
-        // never be flung off / lost, and never floats in the middle.
-        // (The earlier "auto seems stuck centre" was the opaque
-        // GestureDetector eating the native drag; that's removed now.)
+        // Spawn AT the right edge instead of the plugin's default centre
+        // (alignment defaults to OverlayAlignment.center — that is why the
+        // bubble sits on the vertical centre line; nothing in our code puts
+        // it there). positionGravity.auto then handles drag + edge snap.
+        alignment: OverlayAlignment.centerRight,
         positionGravity: PositionGravity.auto,
         overlayTitle: '防御塔攻略',
         overlayContent: '点击看最新图文',
