@@ -1,5 +1,4 @@
 import 'dart:io' show Platform;
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:ota_update/ota_update.dart';
@@ -260,10 +259,11 @@ class _NameSetupState extends State<_NameSetup> {
   }
 }
 
-/// Home = tower list, with an in-app draggable floating button on top.
-/// On Android this same button can spawn a true system overlay that
-/// floats over OTHER apps. On iOS the system overlay is impossible, so
-/// the floating button only lives inside this app.
+/// Home = tower list.
+/// Android: the floating bubble is a real SYSTEM overlay. It auto-starts on
+/// launch when permission is granted; if not, a prominent banner offers a
+/// one-tap path to grant it. The user never has to manually "start" it.
+/// iOS: system overlay is impossible, so an in-app draggable bubble is shown.
 class _HomeWithBubble extends StatefulWidget {
   final String name;
   const _HomeWithBubble({required this.name});
@@ -271,57 +271,139 @@ class _HomeWithBubble extends StatefulWidget {
   State<_HomeWithBubble> createState() => _HomeWithBubbleState();
 }
 
-class _HomeWithBubbleState extends State<_HomeWithBubble> {
-  Offset _pos = const Offset(20, 120);
+class _HomeWithBubbleState extends State<_HomeWithBubble>
+    with WidgetsBindingObserver {
+  Offset _pos = const Offset(20, 120); // iOS in-app bubble only
+  bool _checking = true;
+  bool _granted = false;
+  bool _active = false;
 
-  Future<void> _enableSystemOverlay() async {
-    final granted = await FlutterOverlayWindow.isPermissionGranted();
-    if (!granted) {
-      final ok = await FlutterOverlayWindow.requestPermission();
-      if (ok != true) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('需要「显示在其他应用上层」权限')));
-        return;
-      }
+  bool get _isAndroid => Platform.isAndroid;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _syncOverlay());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning from the system permission screen → re-check & auto-start.
+    if (state == AppLifecycleState.resumed) _syncOverlay();
+  }
+
+  Future<void> _startOverlay() async {
+    try {
+      await FlutterOverlayWindow.showOverlay(
+        enableDrag: true,
+        positionGravity: PositionGravity.auto, // snap to nearest side edge
+        overlayTitle: '防御塔攻略',
+        overlayContent: '点击看最新图文',
+        flag: OverlayFlag.defaultFlag,
+        height: 60,
+        width: 60,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _syncOverlay() async {
+    if (!_isAndroid) {
+      if (mounted) setState(() => _checking = false);
+      return;
     }
-    await FlutterOverlayWindow.showOverlay(
-      enableDrag: false, // we do our own drag + edge-snap inside the overlay
-      overlayTitle: '防御塔攻略',
-      overlayContent: '点击展开看最新图文',
-      flag: OverlayFlag.defaultFlag,
-      height: 64,
-      width: 64,
-    );
+    final granted = await FlutterOverlayWindow.isPermissionGranted();
+    bool active = false;
+    try {
+      active = await FlutterOverlayWindow.isActive();
+    } catch (_) {}
+    if (granted && !active) {
+      await _startOverlay();
+      active = true;
+    }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('悬浮按钮已开启，可切到其他 app')));
+    setState(() {
+      _granted = granted;
+      _active = active;
+      _checking = false;
+    });
+  }
+
+  Future<void> _requestPermission() async {
+    await FlutterOverlayWindow.requestPermission();
+    // The toggle happens on a system screen; the real result is picked up
+    // by didChangeAppLifecycleState(resumed) → _syncOverlay().
   }
 
   @override
   Widget build(BuildContext context) {
-    final isAndroid = Platform.isAndroid;
     return Stack(
       children: [
         TowerListScreen(name: widget.name),
-        Positioned(
-          left: _pos.dx,
-          top: _pos.dy,
-          child: GestureDetector(
-            onPanUpdate: (d) => setState(() => _pos += d.delta),
-            onTap: () {
-              showModalBottomSheet(
-                context: context,
-                builder: (_) => _QuickPanel(
-                  name: widget.name,
-                  isAndroid: isAndroid,
-                  onEnableSystemOverlay: _enableSystemOverlay,
+
+        // Android: permission gate banner (only when not granted)
+        if (_isAndroid && !_checking && !_granted)
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: Material(
+              color: const Color(0xFF7C3AED),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                  child: Row(children: [
+                    const Icon(Icons.bubble_chart, color: Colors.white),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        '悬浮球需要「显示在其他应用上层」权限才能用',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF7C3AED),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: _requestPermission,
+                      child: const Text('立即开启'),
+                    ),
+                  ]),
                 ),
-              );
-            },
-            child: const _Bubble(),
+              ),
+            ),
           ),
-        ),
+
+        // iOS: in-app draggable bubble (no system overlay possible)
+        if (!_isAndroid)
+          Positioned(
+            left: _pos.dx,
+            top: _pos.dy,
+            child: GestureDetector(
+              onPanUpdate: (d) => setState(() => _pos += d.delta),
+              onTap: () {
+                showModalBottomSheet(
+                  context: context,
+                  builder: (_) => _QuickPanel(
+                    name: widget.name,
+                    isAndroid: false,
+                    onEnableSystemOverlay: () async {},
+                  ),
+                );
+              },
+              child: const _Bubble(),
+            ),
+          ),
       ],
     );
   }
@@ -400,11 +482,12 @@ class _QuickPanel extends StatelessWidget {
   }
 }
 
-/// Android system-overlay chat head (Messenger-style):
-/// - collapsed: small bubble, custom drag that glides + snaps to the nearest
-///   screen edge, never stuck off-screen
-/// - expanded: the overlay window becomes full-screen so the panel lays out
-///   responsively (portrait/landscape) and is never clipped in a corner
+/// Android system-overlay chat head.
+/// Dragging + edge-snap is handled natively by the plugin
+/// (enableDrag:true + PositionGravity.auto) — the standard Messenger-style
+/// behaviour (drag freely, release → snaps to nearest left/right edge).
+/// Tap → the overlay window resizes to full screen so the panel is big and
+/// crisp; collapse → back to a small draggable bubble.
 class _OverlayBubble extends StatefulWidget {
   const _OverlayBubble();
   @override
@@ -412,68 +495,28 @@ class _OverlayBubble extends StatefulWidget {
 }
 
 class _OverlayBubbleState extends State<_OverlayBubble>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   bool _expanded = false;
-
-  // Bubble window position in physical pixels (raw window-manager coords).
-  double _bx = 0;
-  double _by = 0;
-  bool _posInited = false;
-
-  late final AnimationController _snap = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 320),
-  );
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _initPos();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _snap.dispose();
     super.dispose();
-  }
-
-  ui.FlutterView get _view =>
-      WidgetsBinding.instance.platformDispatcher.views.first;
-  double get _dpr => _view.devicePixelRatio;
-  Size get _screenPx => _view.physicalSize;
-  double get _bubblePx => 64 * _dpr;
-
-  Future<void> _initPos() async {
-    try {
-      final p = await FlutterOverlayWindow.getOverlayPosition();
-      _bx = (p.x ?? 0).toDouble();
-      _by = (p.y ?? 0).toDouble();
-    } catch (_) {
-      _bx = _screenPx.width - _bubblePx;
-      _by = _screenPx.height * 0.35;
-    }
-    _posInited = true;
   }
 
   @override
   void didChangeMetrics() {
-    // Rotation / screen size change: keep full-screen panel correct,
-    // and keep the collapsed bubble on-screen.
+    // Rotation: keep the expanded panel filling the (new) screen size.
     if (_expanded) {
       FlutterOverlayWindow.resizeOverlay(
           WindowSize.matchParent, WindowSize.matchParent, false);
-    } else if (_posInited) {
-      _clampPos();
-      FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
     }
-  }
-
-  void _clampPos() {
-    final s = _screenPx;
-    _bx = _bx.clamp(0.0, (s.width - _bubblePx).clamp(0.0, s.width));
-    _by = _by.clamp(0.0, (s.height - _bubblePx).clamp(0.0, s.height));
   }
 
   Future<void> _expand() async {
@@ -484,52 +527,19 @@ class _OverlayBubbleState extends State<_OverlayBubble>
 
   Future<void> _collapse() async {
     setState(() => _expanded = false);
-    await FlutterOverlayWindow.resizeOverlay(64, 64, false);
-    _clampPos();
-    await FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
-    _snapToEdge();
-  }
-
-  void _onDragUpdate(DragUpdateDetails d) {
-    if (_snap.isAnimating) _snap.stop();
-    _bx += d.delta.dx * _dpr;
-    _by += d.delta.dy * _dpr;
-    _clampPos();
-    FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
-  }
-
-  void _snapToEdge() {
-    final s = _screenPx;
-    final centerX = _bx + _bubblePx / 2;
-    final targetX = centerX < s.width / 2 ? 0.0 : s.width - _bubblePx;
-    final fromX = _bx;
-    final fromY = _by;
-    final targetY = fromY.clamp(0.0, (s.height - _bubblePx).clamp(0.0, s.height));
-    final anim = CurvedAnimation(parent: _snap, curve: Curves.easeOutCubic);
-    void tick() {
-      final t = anim.value;
-      _bx = fromX + (targetX - fromX) * t;
-      _by = fromY + (targetY - fromY) * t;
-      FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
-    }
-
-    _snap
-      ..removeListener(tick)
-      ..reset()
-      ..addListener(tick);
-    _snap.forward();
+    // back to a small, still-draggable bubble (native drag + auto edge snap)
+    await FlutterOverlayWindow.resizeOverlay(60, 60, true);
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_expanded) {
+      // Native drag moves the window; we only need a tap target here.
       return Material(
         color: Colors.transparent,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: _expand,
-          onPanUpdate: _onDragUpdate,
-          onPanEnd: (_) => _snapToEdge(),
           child: Center(
             child: Container(
               width: 56,
@@ -551,12 +561,12 @@ class _OverlayBubbleState extends State<_OverlayBubble>
       );
     }
 
-    // Full-screen window now → MediaQuery == real screen, lay out responsively.
+    // Full-screen window → MediaQuery == real screen. Use almost the whole
+    // screen so images/text are as large and clear as possible.
     final mq = MediaQuery.of(context);
     final landscape = mq.size.width > mq.size.height;
-    final cardW = (mq.size.width * (landscape ? 0.62 : 0.94))
-        .clamp(280.0, 560.0);
-    final cardH = mq.size.height * (landscape ? 0.88 : 0.7);
+    final cardW = mq.size.width * (landscape ? 0.82 : 0.98);
+    final cardH = mq.size.height * 0.92;
 
     return Material(
       color: Colors.transparent,
@@ -570,7 +580,7 @@ class _OverlayBubbleState extends State<_OverlayBubble>
           ),
           Center(
             child: SizedBox(
-              width: cardW.toDouble(),
+              width: cardW,
               height: cardH,
               child: Container(
                 decoration: BoxDecoration(
@@ -589,7 +599,7 @@ class _OverlayBubbleState extends State<_OverlayBubble>
                     Container(
                       color: const Color(0xFF1E2A47),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+                          horizontal: 12, vertical: 10),
                       child: Row(children: [
                         const Icon(Icons.shield,
                             color: Colors.white, size: 16),
@@ -606,15 +616,16 @@ class _OverlayBubbleState extends State<_OverlayBubble>
                           child: const Padding(
                             padding: EdgeInsets.all(4),
                             child: Icon(Icons.remove,
-                                color: Colors.white, size: 18),
+                                color: Colors.white, size: 20),
                           ),
                         ),
+                        const SizedBox(width: 4),
                         InkWell(
                           onTap: () => FlutterOverlayWindow.closeOverlay(),
                           child: const Padding(
                             padding: EdgeInsets.all(4),
                             child: Icon(Icons.close,
-                                color: Colors.white, size: 18),
+                                color: Colors.white, size: 20),
                           ),
                         ),
                       ]),
