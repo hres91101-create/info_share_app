@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:ota_update/ota_update.dart';
@@ -285,7 +286,7 @@ class _HomeWithBubbleState extends State<_HomeWithBubble> {
       }
     }
     await FlutterOverlayWindow.showOverlay(
-      enableDrag: true,
+      enableDrag: false, // we do our own drag + edge-snap inside the overlay
       overlayTitle: '防御塔攻略',
       overlayContent: '点击展开看最新图文',
       flag: OverlayFlag.defaultFlag,
@@ -399,26 +400,124 @@ class _QuickPanel extends StatelessWidget {
   }
 }
 
-/// Android system-overlay chat head: collapsed bubble that expands into a
-/// panel showing the latest site images + text, then collapses back.
-/// The overlay window itself is resized between the two states.
+/// Android system-overlay chat head (Messenger-style):
+/// - collapsed: small bubble, custom drag that glides + snaps to the nearest
+///   screen edge, never stuck off-screen
+/// - expanded: the overlay window becomes full-screen so the panel lays out
+///   responsively (portrait/landscape) and is never clipped in a corner
 class _OverlayBubble extends StatefulWidget {
   const _OverlayBubble();
   @override
   State<_OverlayBubble> createState() => _OverlayBubbleState();
 }
 
-class _OverlayBubbleState extends State<_OverlayBubble> {
+class _OverlayBubbleState extends State<_OverlayBubble>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   bool _expanded = false;
+
+  // Bubble window position in physical pixels (raw window-manager coords).
+  double _bx = 0;
+  double _by = 0;
+  bool _posInited = false;
+
+  late final AnimationController _snap = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initPos();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _snap.dispose();
+    super.dispose();
+  }
+
+  ui.FlutterView get _view =>
+      WidgetsBinding.instance.platformDispatcher.views.first;
+  double get _dpr => _view.devicePixelRatio;
+  Size get _screenPx => _view.physicalSize;
+  double get _bubblePx => 64 * _dpr;
+
+  Future<void> _initPos() async {
+    try {
+      final p = await FlutterOverlayWindow.getOverlayPosition();
+      _bx = (p.x ?? 0).toDouble();
+      _by = (p.y ?? 0).toDouble();
+    } catch (_) {
+      _bx = _screenPx.width - _bubblePx;
+      _by = _screenPx.height * 0.35;
+    }
+    _posInited = true;
+  }
+
+  @override
+  void didChangeMetrics() {
+    // Rotation / screen size change: keep full-screen panel correct,
+    // and keep the collapsed bubble on-screen.
+    if (_expanded) {
+      FlutterOverlayWindow.resizeOverlay(
+          WindowSize.matchParent, WindowSize.matchParent, false);
+    } else if (_posInited) {
+      _clampPos();
+      FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
+    }
+  }
+
+  void _clampPos() {
+    final s = _screenPx;
+    _bx = _bx.clamp(0.0, (s.width - _bubblePx).clamp(0.0, s.width));
+    _by = _by.clamp(0.0, (s.height - _bubblePx).clamp(0.0, s.height));
+  }
 
   Future<void> _expand() async {
     setState(() => _expanded = true);
-    await FlutterOverlayWindow.resizeOverlay(330, 480, false);
+    await FlutterOverlayWindow.resizeOverlay(
+        WindowSize.matchParent, WindowSize.matchParent, false);
   }
 
   Future<void> _collapse() async {
     setState(() => _expanded = false);
-    await FlutterOverlayWindow.resizeOverlay(64, 64, true);
+    await FlutterOverlayWindow.resizeOverlay(64, 64, false);
+    _clampPos();
+    await FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
+    _snapToEdge();
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_snap.isAnimating) _snap.stop();
+    _bx += d.delta.dx * _dpr;
+    _by += d.delta.dy * _dpr;
+    _clampPos();
+    FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
+  }
+
+  void _snapToEdge() {
+    final s = _screenPx;
+    final centerX = _bx + _bubblePx / 2;
+    final targetX = centerX < s.width / 2 ? 0.0 : s.width - _bubblePx;
+    final fromX = _bx;
+    final fromY = _by;
+    final targetY = fromY.clamp(0.0, (s.height - _bubblePx).clamp(0.0, s.height));
+    final anim = CurvedAnimation(parent: _snap, curve: Curves.easeOutCubic);
+    void tick() {
+      final t = anim.value;
+      _bx = fromX + (targetX - fromX) * t;
+      _by = fromY + (targetY - fromY) * t;
+      FlutterOverlayWindow.moveOverlay(OverlayPosition(_bx, _by));
+    }
+
+    _snap
+      ..removeListener(tick)
+      ..reset()
+      ..addListener(tick);
+    _snap.forward();
   }
 
   @override
@@ -427,7 +526,10 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
       return Material(
         color: Colors.transparent,
         child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: _expand,
+          onPanUpdate: _onDragUpdate,
+          onPanEnd: (_) => _snapToEdge(),
           child: Center(
             child: Container(
               width: 56,
@@ -448,56 +550,82 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
         ),
       );
     }
+
+    // Full-screen window now → MediaQuery == real screen, lay out responsively.
+    final mq = MediaQuery.of(context);
+    final landscape = mq.size.width > mq.size.height;
+    final cardW = (mq.size.width * (landscape ? 0.62 : 0.94))
+        .clamp(280.0, 560.0);
+    final cardH = mq.size.height * (landscape ? 0.88 : 0.7);
+
     return Material(
       color: Colors.transparent,
-      child: Container(
-        margin: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.35),
-                blurRadius: 14,
-                offset: const Offset(0, 4)),
-          ],
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            Container(
-              color: const Color(0xFF1E2A47),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(children: [
-                const Icon(Icons.shield, color: Colors.white, size: 16),
-                const SizedBox(width: 6),
-                const Expanded(
-                  child: Text('最新动态',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold)),
-                ),
-                InkWell(
-                  onTap: _collapse,
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Icon(Icons.remove, color: Colors.white, size: 18),
-                  ),
-                ),
-                InkWell(
-                  onTap: () => FlutterOverlayWindow.closeOverlay(),
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
-                    child: Icon(Icons.close, color: Colors.white, size: 18),
-                  ),
-                ),
-              ]),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _collapse,
+              child: Container(color: Colors.black54),
             ),
-            const Expanded(child: RecentFeed(compact: true)),
-          ],
-        ),
+          ),
+          Center(
+            child: SizedBox(
+              width: cardW.toDouble(),
+              height: cardH,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black.withOpacity(0.4),
+                        blurRadius: 18,
+                        offset: const Offset(0, 6)),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    Container(
+                      color: const Color(0xFF1E2A47),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      child: Row(children: [
+                        const Icon(Icons.shield,
+                            color: Colors.white, size: 16),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text('最新动态',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                        InkWell(
+                          onTap: _collapse,
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.remove,
+                                color: Colors.white, size: 18),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: () => FlutterOverlayWindow.closeOverlay(),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(Icons.close,
+                                color: Colors.white, size: 18),
+                          ),
+                        ),
+                      ]),
+                    ),
+                    const Expanded(child: RecentFeed(compact: true)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

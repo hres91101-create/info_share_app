@@ -32,6 +32,44 @@ class _RecentFeedState extends State<RecentFeed> {
     return '${two(d.month)}/${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
   }
 
+  /// Tap an image → fill the whole current window, pinch/drag to zoom,
+  /// tap anywhere to close. Works in the system overlay (full-screen when
+  /// expanded) and the in-app panel alike.
+  void _openImage(BuildContext context, String url) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black,
+      builder: (ctx) => GestureDetector(
+        onTap: () => Navigator.of(ctx).pop(),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 1,
+                maxScale: 5,
+                child: Center(
+                  child: Image.network(url, fit: BoxFit.contain,
+                      errorBuilder: (c, e, s) => const Text('（图片加载失败）',
+                          style: TextStyle(color: Colors.white))),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: SafeArea(
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<RecentItem>>(
@@ -104,20 +142,23 @@ class _RecentFeedState extends State<RecentFeed> {
                             color: Color(0xFF374151))),
                     if (it.isImage && it.filePath != null) ...[
                       const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.network(
-                          it.filePath!,
-                          fit: BoxFit.contain,
-                          loadingBuilder: (c, w, p) => p == null
-                              ? w
-                              : const SizedBox(
-                                  height: 80,
-                                  child: Center(
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2))),
-                          errorBuilder: (c, e, s) =>
-                              const Text('（图片加载失败）'),
+                      GestureDetector(
+                        onTap: () => _openImage(context, it.filePath!),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.network(
+                            it.filePath!,
+                            fit: BoxFit.contain,
+                            loadingBuilder: (c, w, p) => p == null
+                                ? w
+                                : const SizedBox(
+                                    height: 80,
+                                    child: Center(
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2))),
+                            errorBuilder: (c, e, s) =>
+                                const Text('（图片加载失败）'),
+                          ),
                         ),
                       ),
                     ],
