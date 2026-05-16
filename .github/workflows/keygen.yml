@@ -1,0 +1,54 @@
+name: 1. Generate signing key (run once)
+
+# One-time. Produces a stable keystore so every release is signed the same way
+# (required for the in-app self-update to install over the old version).
+# After running: copy the two values into repo Settings → Secrets → Actions:
+#   ANDROID_KEYSTORE_B64        = (the base64 block printed in the job summary)
+#   ANDROID_KEYSTORE_PASSWORD   = (the password you typed below)
+
+on:
+  workflow_dispatch:
+    inputs:
+      password:
+        description: "Keystore password (remember it; also goes into ANDROID_KEYSTORE_PASSWORD secret)"
+        required: true
+
+jobs:
+  keygen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Generate keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore release.jks \
+            -alias upload \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "${{ github.event.inputs.password }}" \
+            -keypass "${{ github.event.inputs.password }}" \
+            -dname "CN=info_share_app, OU=team, O=info_share, C=TW"
+          base64 -w0 release.jks > release.jks.b64
+
+      - name: Upload keystore artifact (backup — keep it safe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-keystore
+          path: release.jks
+          retention-days: 7
+
+      - name: Print base64 to job summary
+        run: |
+          {
+            echo "## ANDROID_KEYSTORE_B64";
+            echo "复制下面整段（一行）到 repo Secret \`ANDROID_KEYSTORE_B64\`：";
+            echo '```';
+            cat release.jks.b64;
+            echo '';
+            echo '```';
+            echo "并新增 Secret \`ANDROID_KEYSTORE_PASSWORD\` = 你刚填的密码。";
+          } >> "$GITHUB_STEP_SUMMARY"

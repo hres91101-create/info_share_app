@@ -3,9 +3,44 @@
 Android（真悬浮窗，浮在其他 app 上）+ iOS（app 内悬浮按钮）。
 连接现有网站 API：`https://info-share.onrender.com`。
 
-代码已经写好（`lib/`）。你机器上还没有工具链，按下面装一次即可。
+---
+
+## ★ 推荐：云端编译，你本地零安装
+
+GitHub Actions 已配好，整个编译在云端跑，**你的电脑和手机都不用装任何开发工具**。
+手机只要装最后那个 APK 就能用（Flutter 引擎和所有依赖都打包在 APK 里）。
+
+### 一次性设置（约 5 分钟，全在 GitHub 网页点）
+
+1. **生成签名钥匙**：repo → Actions → 「1. Generate signing key」→ Run workflow，
+   填一个密码（自己记住）。跑完点进这次运行，看 Summary 里印出的一段 base64。
+2. **存两个 Secret**：repo → Settings → Secrets and variables → Actions → New secret：
+   - `ANDROID_KEYSTORE_B64` = Summary 里那段 base64（整段一行）
+   - `ANDROID_KEYSTORE_PASSWORD` = 你刚填的密码
+   > 这把钥匙固定下来，之后每个版本签名一致，自更新才能覆盖安装。
+
+### 出一个能装的 APK（测试用，不发版）
+
+repo → Actions → 「2. Build & Release APK」→ Run workflow（手动）。
+跑完在该次运行页面下载 artifact `info_share_app-apk`，传到手机装上。
+
+### 正式发版（触发队友自动更新）
+
+1. 改 `pubspec.yaml` 的 `version:`（例 `0.1.0+1` → `0.2.0+2`）
+2. 打 tag 并推（在网页也能做：repo → Releases → Draft → 直接建 tag `v0.2.0`，
+   或本机 `git tag v0.2.0 && git push origin v0.2.0`）
+3. CI 自动编译、签名、建好带 APK 的 Release
+4. 队友 app 下次打开 → 弹「发现新版本 0.2.0」→ 立即更新
+   （首次会让用户允许「安装未知应用」）
+
+> tag 必须是 `v` + 和 pubspec 里一致的版本号（如 pubspec `0.2.0` ↔ tag `v0.2.0`），
+> 否则版本比对不出来。
 
 ---
+
+## 以下是本地编译（可选 / 进阶，不需要就跳过）
+
+只有想在电脑上实时调试（hot reload）才需要。日常发版用上面的云端流程即可。
 
 ## 1. 装工具链（一次性，Windows）
 
