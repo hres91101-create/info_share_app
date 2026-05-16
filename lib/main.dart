@@ -2,8 +2,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'services/prefs.dart';
-import 'services/api.dart';
 import 'screens/tower_list_screen.dart';
+import 'widgets/recent_feed.dart';
 
 void main() {
   runApp(const InfoShareApp());
@@ -155,10 +155,10 @@ class _HomeWithBubbleState extends State<_HomeWithBubble> {
     await FlutterOverlayWindow.showOverlay(
       enableDrag: true,
       overlayTitle: '防御塔攻略',
-      overlayContent: '点击展开',
+      overlayContent: '点击展开看最新图文',
       flag: OverlayFlag.defaultFlag,
-      height: 180,
-      width: 180,
+      height: 64,
+      width: 64,
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -216,6 +216,7 @@ class _Bubble extends StatelessWidget {
   }
 }
 
+/// In-app expandable panel (iOS uses this since system overlay is impossible).
 class _QuickPanel extends StatelessWidget {
   final String name;
   final bool isAndroid;
@@ -229,57 +230,36 @@ class _QuickPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('快捷面板 · $name',
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            FutureBuilder(
-              future: Api.fetchTowers(),
-              builder: (ctx, snap) {
-                if (!snap.hasData) {
-                  return const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-                final locked = (snap.data as List<Tower>)
-                    .where((t) => t.locked)
-                    .toList();
-                if (locked.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Text('目前没有塔被锁定'),
-                  );
-                }
-                return Column(
-                  children: locked
-                      .map((t) => ListTile(
-                            dense: true,
-                            leading: const Text('🔥'),
-                            title: Text('塔 ${t.id}'),
-                            subtitle: Text('${t.lockBy} 进攻中'),
-                          ))
-                      .toList(),
-                );
-              },
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Row(children: [
+                const Icon(Icons.shield, size: 18),
+                const SizedBox(width: 6),
+                Text('最新动态 · $name',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
+              ]),
             ),
-            if (isAndroid) ...[
-              const Divider(),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(context);
-                  onEnableSystemOverlay();
-                },
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('开启系统悬浮按钮（浮在其他 app 上）'),
+            const Expanded(child: RecentFeed(compact: true)),
+            if (isAndroid)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onEnableSystemOverlay();
+                    },
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('开启悬浮球（浮在其他 app 上）'),
+                  ),
+                ),
               ),
-            ],
           ],
         ),
       ),
@@ -287,28 +267,104 @@ class _QuickPanel extends StatelessWidget {
   }
 }
 
-/// Content shown inside the Android system overlay window.
-class _OverlayBubble extends StatelessWidget {
+/// Android system-overlay chat head: collapsed bubble that expands into a
+/// panel showing the latest site images + text, then collapses back.
+/// The overlay window itself is resized between the two states.
+class _OverlayBubble extends StatefulWidget {
   const _OverlayBubble();
   @override
+  State<_OverlayBubble> createState() => _OverlayBubbleState();
+}
+
+class _OverlayBubbleState extends State<_OverlayBubble> {
+  bool _expanded = false;
+
+  Future<void> _expand() async {
+    setState(() => _expanded = true);
+    await FlutterOverlayWindow.resizeOverlay(330, 480, false);
+  }
+
+  Future<void> _collapse() async {
+    setState(() => _expanded = false);
+    await FlutterOverlayWindow.resizeOverlay(64, 64, true);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (!_expanded) {
+      return Material(
+        color: Colors.transparent,
+        child: GestureDetector(
+          onTap: _expand,
+          child: Center(
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E2A47),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withOpacity(0.35),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2)),
+                ],
+              ),
+              child: const Icon(Icons.shield, color: Colors.white),
+            ),
+          ),
+        ),
+      );
+    }
     return Material(
       color: Colors.transparent,
-      child: GestureDetector(
-        onTap: () async {
-          // Tapping the system bubble pops a tiny live summary in-overlay.
-          await FlutterOverlayWindow.shareData('open');
-        },
-        child: Center(
-          child: Container(
-            width: 56,
-            height: 56,
-            decoration: const BoxDecoration(
-              color: Color(0xFF1E2A47),
-              shape: BoxShape.circle,
+      child: Container(
+        margin: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.35),
+                blurRadius: 14,
+                offset: const Offset(0, 4)),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            Container(
+              color: const Color(0xFF1E2A47),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(children: [
+                const Icon(Icons.shield, color: Colors.white, size: 16),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text('最新动态',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold)),
+                ),
+                InkWell(
+                  onTap: _collapse,
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.remove, color: Colors.white, size: 18),
+                  ),
+                ),
+                InkWell(
+                  onTap: () => FlutterOverlayWindow.closeOverlay(),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.close, color: Colors.white, size: 18),
+                  ),
+                ),
+              ]),
             ),
-            child: const Icon(Icons.shield, color: Colors.white),
-          ),
+            const Expanded(child: RecentFeed(compact: true)),
+          ],
         ),
       ),
     );

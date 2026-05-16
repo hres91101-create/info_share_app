@@ -16,6 +16,17 @@ class Api {
     return list.map((e) => Tower.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  static Future<List<RecentItem>> fetchRecent({int limit = 30}) async {
+    final r = await http.get(Uri.parse('$baseUrl/api/recent?limit=$limit'));
+    if (r.statusCode != 200) {
+      throw ApiException('最新动态读取失败 (${r.statusCode})');
+    }
+    final list = jsonDecode(r.body) as List<dynamic>;
+    return list
+        .map((e) => RecentItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   static Future<TowerDetail> fetchTowerDetail(int id) async {
     final results = await Future.wait([
       http.get(Uri.parse('$baseUrl/api/towers/$id')),
@@ -141,6 +152,26 @@ class ImageItem {
         j['author'] as String? ?? '',
         j['file_path'] as String? ?? '',
         j['caption'] as String?,
+        (j['created_at'] as num?)?.toInt() ?? 0,
+      );
+}
+
+class RecentItem {
+  final String kind; // 'note' | 'image'
+  final int towerId;
+  final String author;
+  final String? text;
+  final String? filePath;
+  final int createdAt;
+  RecentItem(this.kind, this.towerId, this.author, this.text, this.filePath,
+      this.createdAt);
+  bool get isImage => kind == 'image';
+  factory RecentItem.fromJson(Map<String, dynamic> j) => RecentItem(
+        j['kind'] as String? ?? 'note',
+        (j['tower_id'] as num?)?.toInt() ?? 0,
+        j['author'] as String? ?? '',
+        j['text'] as String?,
+        j['file_path'] as String?,
         (j['created_at'] as num?)?.toInt() ?? 0,
       );
 }
