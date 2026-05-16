@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/api.dart';
+import '../services/prefs.dart';
 import 'recent_feed.dart';
 import 'zone_map.dart';
 
@@ -16,6 +18,17 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
   int _view = 0; // 0 = maps, 1 = recent feed
   int? _towerId;
   Future<TowerDetail>? _detailF;
+  String _name = '队友';
+
+  @override
+  void initState() {
+    super.initState();
+    Prefs.getName().then((n) {
+      if (n != null && n.isNotEmpty && mounted) {
+        setState(() => _name = n);
+      }
+    });
+  }
 
   void _openTower(int id) => setState(() {
         _towerId = id;
@@ -26,6 +39,82 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
         _towerId = null;
         _detailF = null;
       });
+
+  bool _busy = false;
+
+  Future<void> _toast(String msg) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: Text(msg),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('好')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _doAction(Future<void> Function() fn, String ok) async {
+    setState(() => _busy = true);
+    try {
+      await fn();
+      if (_towerId != null && mounted) {
+        setState(() => _detailF = Api.fetchTowerDetail(_towerId!));
+      }
+      await _toast(ok);
+    } catch (e) {
+      await _toast('失败：$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _overlayWriteNote() async {
+    final ctrl = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('写笔记'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 5,
+          maxLength: 4000,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '输入攻略信息...'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('送出')),
+        ],
+      ),
+    );
+    if (text == null || text.isEmpty || _towerId == null) return;
+    await _doAction(
+        () => Api.postNote(_towerId!, _name, text), '已送出');
+  }
+
+  Future<void> _overlayUploadImages() async {
+    if (_towerId == null) return;
+    List<XFile> picked;
+    try {
+      picked = await ImagePicker().pickMultiImage(imageQuality: 85);
+    } catch (e) {
+      await _toast('悬浮窗内无法打开相册（Android 限制）。\n请到 App 内的这座塔上传图片。');
+      return;
+    }
+    if (picked.isEmpty) return;
+    await _doAction(
+      () => Api.uploadImages(
+          _towerId!, _name, picked.map((x) => x.path).toList()),
+      '已上传 ${picked.length} 张图片',
+    );
+  }
 
   String _fmt(int ts) {
     final d = DateTime.fromMillisecondsSinceEpoch(ts);
@@ -110,6 +199,39 @@ class _OverlayBrowserState extends State<OverlayBrowser> {
   }
 
   Widget _towerDetail() {
+    return Column(
+      children: [
+        Expanded(child: _towerDetailFeed()),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _busy ? null : _overlayWriteNote,
+                  icon: const Icon(Icons.edit, size: 18),
+                  label: const Text('写笔记'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF7C3AED)),
+                  onPressed: _busy ? null : _overlayUploadImages,
+                  icon: const Icon(Icons.add_photo_alternate, size: 18),
+                  label: const Text('上传图片'),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _towerDetailFeed() {
     return FutureBuilder<TowerDetail>(
       future: _detailF,
       builder: (ctx, snap) {

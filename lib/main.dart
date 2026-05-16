@@ -255,10 +255,12 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     try {
       await FlutterOverlayWindow.showOverlay(
         enableDrag: true,
-        // `auto` was forcing the bubble back toward the horizontal centre and
-        // fighting drags. `none` = native drag, stays exactly where dropped,
-        // so the user can place it at ANY of the four edges themselves.
-        positionGravity: PositionGravity.none,
+        // Messenger-style: drag freely, on release the plugin snaps the
+        // bubble to the nearest screen edge and keeps it on-screen — it can
+        // never be flung off / lost, and never floats in the middle.
+        // (The earlier "auto seems stuck centre" was the opaque
+        // GestureDetector eating the native drag; that's removed now.)
+        positionGravity: PositionGravity.auto,
         overlayTitle: '防御塔攻略',
         overlayContent: '点击看最新图文',
         flag: OverlayFlag.defaultFlag,
@@ -568,24 +570,23 @@ class _OverlayBubbleState extends State<_OverlayBubble> {
   Future<void> _expand() async {
     setState(() => _expanded = true);
     await _fillScreen();
+    // Make the expanded panel focusable so the 写笔记 TextField can get the
+    // keyboard (a defaultFlag overlay is non-focusable → no keyboard).
+    try {
+      await FlutterOverlayWindow.updateFlag(OverlayFlag.focusPointer);
+    } catch (_) {}
   }
 
   Future<void> _collapse() async {
     setState(() => _expanded = false);
-    // Back to a small, still-draggable bubble…
-    await FlutterOverlayWindow.resizeOverlay(60, 60, true);
-    // …and put it back at a guaranteed on-screen spot (right edge, upper
-    // third) so it can never end up stuck off-screen after collapsing.
     try {
-      final s = _view.physicalSize;
-      final bubble = 60 * _view.devicePixelRatio;
-      await FlutterOverlayWindow.moveOverlay(
-        OverlayPosition(
-          (s.width - bubble).clamp(0.0, s.width).toDouble(),
-          (s.height * 0.3).clamp(0.0, s.height).toDouble(),
-        ),
-      );
+      await FlutterOverlayWindow.updateFlag(OverlayFlag.defaultFlag);
     } catch (_) {}
+    // Back to a small, still-draggable bubble. Do NOT manually moveOverlay
+    // here — that physical-px move was flinging the small bubble off-screen
+    // (the "minimize makes it disappear" bug). positionGravity.auto snaps it
+    // back onto the nearest screen edge automatically and keeps it on-screen.
+    await FlutterOverlayWindow.resizeOverlay(60, 60, true);
   }
 
   @override

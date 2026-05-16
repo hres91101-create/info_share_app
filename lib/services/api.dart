@@ -81,6 +81,25 @@ class Api {
     }
   }
 
+  /// Upload one or more local image files to a tower (multipart, one request
+  /// per file — matches the website's single-image endpoint).
+  static Future<void> uploadImages(
+      int towerId, String author, List<String> paths) async {
+    for (final p in paths) {
+      final req = http.MultipartRequest(
+          'POST', Uri.parse('$baseUrl/api/towers/$towerId/images'));
+      req.fields['author'] = author;
+      req.fields['caption'] = '';
+      req.files.add(await http.MultipartFile.fromPath('image', p));
+      final resp = await req.send();
+      if (resp.statusCode != 200) {
+        final body = await resp.stream.bytesToString();
+        throw ApiException(
+            _errorOf(body) ?? '图片上传失败 (${resp.statusCode})');
+      }
+    }
+  }
+
   static Future<void> lockTower(int towerId, String author) async {
     final r = await http.post(
       Uri.parse('$baseUrl/api/towers/$towerId/lock'),

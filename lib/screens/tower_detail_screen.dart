@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/api.dart';
 
 class TowerDetailScreen extends StatefulWidget {
@@ -67,6 +68,17 @@ class _TowerDetailScreenState extends State<TowerDetailScreen> {
     if (text == null || text.isEmpty) return;
     await _runAction(
         () => Api.postNote(widget.towerId, widget.name, text), '已送出');
+  }
+
+  Future<void> _uploadImages() async {
+    final List<XFile> picked =
+        await ImagePicker().pickMultiImage(imageQuality: 85);
+    if (picked.isEmpty) return;
+    await _runAction(
+      () => Api.uploadImages(
+          widget.towerId, widget.name, picked.map((x) => x.path).toList()),
+      '已上传 ${picked.length} 张图片',
+    );
   }
 
   String _fmt(int ts) {
@@ -171,42 +183,59 @@ class _TowerDetailScreenState extends State<TowerDetailScreen> {
               SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(10),
-                  child: Row(children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _busy ? null : _writeNote,
-                        icon: const Icon(Icons.edit),
-                        label: const Text('写笔记'),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _busy ? null : _writeNote,
+                            icon: const Icon(Icons.edit),
+                            label: const Text('写笔记'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF7C3AED)),
+                            onPressed: _busy ? null : _uploadImages,
+                            icon: const Icon(Icons.add_photo_alternate),
+                            label: const Text('上传图片'),
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: d.locked
+                            ? OutlinedButton.icon(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _runAction(
+                                        () => Api.unlockTower(
+                                            widget.towerId, widget.name),
+                                        '已解锁'),
+                                icon: const Icon(Icons.lock_open),
+                                label: const Text('解锁'),
+                              )
+                            : ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                    backgroundColor:
+                                        const Color(0xFFDC2626)),
+                                onPressed: _busy
+                                    ? null
+                                    : () => _runAction(
+                                        () => Api.lockTower(
+                                            widget.towerId, widget.name),
+                                        '已锁定（30 分钟）'),
+                                icon:
+                                    const Icon(Icons.local_fire_department),
+                                label: const Text('进攻锁定'),
+                              ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: d.locked
-                          ? OutlinedButton.icon(
-                              onPressed: _busy
-                                  ? null
-                                  : () => _runAction(
-                                      () => Api.unlockTower(
-                                          widget.towerId, widget.name),
-                                      '已解锁'),
-                              icon: const Icon(Icons.lock_open),
-                              label: const Text('解锁'),
-                            )
-                          : ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                  backgroundColor:
-                                      const Color(0xFFDC2626)),
-                              onPressed: _busy
-                                  ? null
-                                  : () => _runAction(
-                                      () => Api.lockTower(
-                                          widget.towerId, widget.name),
-                                      '已锁定（30 分钟）'),
-                              icon: const Icon(Icons.local_fire_department),
-                              label: const Text('进攻锁定'),
-                            ),
-                    ),
-                  ]),
+                    ],
+                  ),
                 ),
               ),
             ],
