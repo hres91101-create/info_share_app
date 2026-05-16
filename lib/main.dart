@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:ota_update/ota_update.dart';
@@ -360,6 +361,21 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     // by didChangeAppLifecycleState(resumed) → _syncOverlay().
   }
 
+  /// Recover a bubble that got dragged off-screen / lost: tear it down and
+  /// re-create it at the plugin's default on-screen position.
+  Future<void> _resetOverlay() async {
+    try {
+      if (await FlutterOverlayWindow.isActive()) {
+        await FlutterOverlayWindow.closeOverlay();
+      }
+    } catch (_) {}
+    await _startOverlay();
+    if (!mounted) return;
+    setState(() => _active = true);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('悬浮球已重新放置到屏幕内')));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -397,6 +413,31 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
                       child: const Text('立即开启'),
                     ),
                   ]),
+                ),
+              ),
+            ),
+          ),
+
+        // Android: always-available recovery for a lost/off-screen bubble
+        if (_isAndroid && !_checking && _granted)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                    ),
+                    onPressed: _resetOverlay,
+                    icon: const Icon(Icons.my_location, size: 18),
+                    label: const Text('悬浮球不见了？重新放置'),
+                  ),
                 ),
               ),
             ),
@@ -528,25 +569,49 @@ class _OverlayBubbleState extends State<_OverlayBubble>
     super.dispose();
   }
 
+  ui.FlutterView get _view =>
+      WidgetsBinding.instance.platformDispatcher.views.first;
+
   @override
   void didChangeMetrics() {
-    // Rotation: keep the expanded panel filling the (new) screen size.
-    if (_expanded) {
-      FlutterOverlayWindow.resizeOverlay(
-          WindowSize.matchParent, WindowSize.matchParent, false);
-    }
+    // Rotation: keep the expanded panel filling the (new) screen and pinned
+    // to the screen origin.
+    if (_expanded) _fillScreen();
+  }
+
+  /// Make the overlay window cover the whole device screen AND sit at the
+  /// screen origin. resizeOverlay alone keeps the window at the bubble's
+  /// dragged position, so a full-size window spills off-screen — we must also
+  /// moveOverlay to (0,0).
+  Future<void> _fillScreen() async {
+    await FlutterOverlayWindow.resizeOverlay(
+        WindowSize.matchParent, WindowSize.matchParent, false);
+    try {
+      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0.0, 0.0));
+    } catch (_) {}
   }
 
   Future<void> _expand() async {
     setState(() => _expanded = true);
-    await FlutterOverlayWindow.resizeOverlay(
-        WindowSize.matchParent, WindowSize.matchParent, false);
+    await _fillScreen();
   }
 
   Future<void> _collapse() async {
     setState(() => _expanded = false);
-    // back to a small, still-draggable bubble (native drag + auto edge snap)
+    // Back to a small, still-draggable bubble…
     await FlutterOverlayWindow.resizeOverlay(60, 60, true);
+    // …and put it back at a guaranteed on-screen spot (right edge, upper
+    // third) so it can never end up stuck off-screen after collapsing.
+    try {
+      final s = _view.physicalSize;
+      final bubble = 60 * _view.devicePixelRatio;
+      await FlutterOverlayWindow.moveOverlay(
+        OverlayPosition(
+          (s.width - bubble).clamp(0.0, s.width).toDouble(),
+          (s.height * 0.3).clamp(0.0, s.height).toDouble(),
+        ),
+      );
+    } catch (_) {}
   }
 
   @override
