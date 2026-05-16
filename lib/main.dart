@@ -361,6 +361,17 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
     // by didChangeAppLifecycleState(resumed) → _syncOverlay().
   }
 
+  /// Kill the overlay entirely, even if the bubble is unreachable off-screen.
+  Future<void> _closeOverlay() async {
+    try {
+      await FlutterOverlayWindow.closeOverlay();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _active = false);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('悬浮球已关闭')));
+  }
+
   /// Recover a bubble that got dragged off-screen / lost: tear it down and
   /// re-create it at the plugin's default on-screen position.
   Future<void> _resetOverlay() async {
@@ -418,7 +429,8 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
             ),
           ),
 
-        // Android: always-available recovery for a lost/off-screen bubble
+        // Android: always-available controls (recover / kill the bubble even
+        // if it's stuck off-screen — no need to reboot the phone)
         if (_isAndroid && !_checking && _granted)
           Positioned(
             left: 0,
@@ -428,16 +440,25 @@ class _HomeWithBubbleState extends State<_HomeWithBubble>
               top: false,
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: Colors.white,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white),
+                      onPressed: _closeOverlay,
+                      icon: const Icon(Icons.cancel_outlined, size: 18),
+                      label: const Text('关闭悬浮球'),
                     ),
-                    onPressed: _resetOverlay,
-                    icon: const Icon(Icons.my_location, size: 18),
-                    label: const Text('悬浮球不见了？重新放置'),
-                  ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white),
+                      onPressed: _resetOverlay,
+                      icon: const Icon(Icons.my_location, size: 18),
+                      label: const Text('重新放置'),
+                    ),
+                  ],
                 ),
               ),
             ),

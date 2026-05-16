@@ -21,6 +21,7 @@ SERVICE = (
     '        <service\n'
     '            android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"\n'
     '            android:exported="false"\n'
+    '            android:stopWithTask="true"\n'
     '            android:foregroundServiceType="specialUse" />\n'
 )
 
