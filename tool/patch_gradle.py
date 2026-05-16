@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Force every Android subproject to compileSdk 34.
+"""Force every Android subproject to compileSdk 36.
 
-Some plugins (e.g. ota_update) hardcode an old compileSdkVersion (28), which
-breaks resource linking with "android:attr/lStar not found" (lStar needs
-API 31+). android/ is generated fresh by `flutter create` in CI.
+androidx deps pulled in transitively (androidx.core 1.17, androidx.browser
+1.9 via url_launcher, etc.) require compiling against API 36+. Plugins also
+hardcode old compileSdk values. Forcing every module to 36 satisfies all of
+them. android/ is generated fresh by `flutter create` in CI.
 
 The override must be INSERTED before Flutter's own
 `subprojects { project.evaluationDependsOn(":app") }` block — appending at the
@@ -21,7 +22,7 @@ subprojects {{
     afterEvaluate {{ proj ->
         if (proj.hasProperty('android')) {{
             proj.android {{
-                compileSdkVersion 34
+                compileSdkVersion 36
             }}
         }}
     }}
@@ -35,7 +36,7 @@ subprojects {{
     afterEvaluate {{
         val androidExt = extensions.findByName("android")
         if (androidExt is com.android.build.gradle.BaseExtension) {{
-            androidExt.compileSdkVersion(34)
+            androidExt.compileSdkVersion(36)
         }}
     }}
 }}
@@ -71,7 +72,7 @@ def main() -> int:
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(new)
-    print(f"{path}: inserted compileSdk 34 override before subprojects block")
+    print(f"{path}: inserted compileSdk 36 override before subprojects block")
     return 0
 
 
