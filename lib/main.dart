@@ -2,7 +2,7 @@ import 'dart:io' show Platform;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
-import 'package:ota_update/ota_update.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'services/prefs.dart';
 import 'services/updater.dart';
 import 'screens/tower_list_screen.dart';
@@ -101,6 +101,12 @@ class _GateState extends State<_Gate> with WidgetsBindingObserver {
             children: [
               Text('当前版本 ${info.current}',
                   style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              const SizedBox(height: 8),
+              const Text(
+                '点「下载新版」→ 浏览器下载完成后，点通知栏那个 APK 文件即可安装'
+                '（首次会要求允许「安装未知应用」）。',
+                style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+              ),
               if (info.notes.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Text(info.notes),
@@ -113,15 +119,22 @@ class _GateState extends State<_Gate> with WidgetsBindingObserver {
               onPressed: () => Navigator.pop(ctx),
               child: const Text('稍后')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (_) => _UpdateProgressDialog(url: info.apkUrl),
+              // Most reliable path: let the system browser/Download Manager
+              // fetch the APK, then the user taps the downloaded file to
+              // install. No in-app native installer (that was crashing at
+              // 100%).
+              final ok = await launchUrl(
+                Uri.parse(info.apkUrl),
+                mode: LaunchMode.externalApplication,
               );
+              if (!ok && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('无法打开下载，请手动到 GitHub Releases 下载')));
+              }
             },
-            child: const Text('立即更新'),
+            child: const Text('下载新版'),
           ),
         ],
       ),
@@ -140,88 +153,6 @@ class _GateState extends State<_Gate> with WidgetsBindingObserver {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybePromptUpdate());
     return _HomeWithBubble(name: _name!);
-  }
-}
-
-class _UpdateProgressDialog extends StatefulWidget {
-  final String url;
-  const _UpdateProgressDialog({required this.url});
-  @override
-  State<_UpdateProgressDialog> createState() => _UpdateProgressDialogState();
-}
-
-class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
-  String _status = '准备下载...';
-  double? _progress;
-  bool _failed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _start();
-  }
-
-  void _start() {
-    try {
-      OtaUpdate()
-          .execute(widget.url, destinationFilename: 'info_share_app.apk')
-          .listen(
-        (OtaEvent e) {
-          setState(() {
-            switch (e.status) {
-              case OtaStatus.DOWNLOADING:
-                final p = double.tryParse(e.value ?? '');
-                _progress = p != null ? p / 100.0 : null;
-                _status = '下载中 ${e.value ?? ''}%';
-                break;
-              case OtaStatus.INSTALLING:
-                _progress = null;
-                _status = '准备安装，请在系统弹窗点「安装」';
-                break;
-              case OtaStatus.PERMISSION_NOT_GRANTED_ERROR:
-                _failed = true;
-                _status = '缺少安装权限：请允许本应用「安装未知应用」后重试';
-                break;
-              default:
-                _failed = true;
-                _status = '更新失败：${e.status} ${e.value ?? ''}';
-            }
-          });
-        },
-        onError: (e) {
-          setState(() {
-            _failed = true;
-            _status = '更新失败：$e';
-          });
-        },
-      );
-    } catch (e) {
-      setState(() {
-        _failed = true;
-        _status = '无法启动更新：$e';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('更新'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          LinearProgressIndicator(value: _progress),
-          const SizedBox(height: 12),
-          Text(_status, textAlign: TextAlign.center),
-        ],
-      ),
-      actions: [
-        if (_failed)
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('关闭')),
-      ],
-    );
   }
 }
 
