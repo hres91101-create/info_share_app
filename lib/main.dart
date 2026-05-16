@@ -1,7 +1,9 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import 'package:ota_update/ota_update.dart';
 import 'services/prefs.dart';
+import 'services/updater.dart';
 import 'screens/tower_list_screen.dart';
 import 'widgets/recent_feed.dart';
 
@@ -47,6 +49,8 @@ class _GateState extends State<_Gate> {
   String? _name;
   bool _loading = true;
 
+  bool _updateChecked = false;
+
   @override
   void initState() {
     super.initState();
@@ -61,6 +65,51 @@ class _GateState extends State<_Gate> {
     });
   }
 
+  Future<void> _maybePromptUpdate() async {
+    if (_updateChecked) return;
+    _updateChecked = true;
+    if (!Platform.isAndroid) return; // ota apk install is Android-only
+    final info = await Updater.check();
+    if (info == null || !mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text('发现新版本 ${info.version}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('当前版本 ${info.current}',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              if (info.notes.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(info.notes),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('稍后')),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => _UpdateProgressDialog(url: info.apkUrl),
+              );
+            },
+            child: const Text('立即更新'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -70,7 +119,90 @@ class _GateState extends State<_Gate> {
     if (_name == null) {
       return _NameSetup(onDone: (n) => setState(() => _name = n));
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybePromptUpdate());
     return _HomeWithBubble(name: _name!);
+  }
+}
+
+class _UpdateProgressDialog extends StatefulWidget {
+  final String url;
+  const _UpdateProgressDialog({required this.url});
+  @override
+  State<_UpdateProgressDialog> createState() => _UpdateProgressDialogState();
+}
+
+class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
+  String _status = '准备下载...';
+  double? _progress;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  void _start() {
+    try {
+      OtaUpdate()
+          .execute(widget.url, destinationFilename: 'info_share_app.apk')
+          .listen(
+        (OtaEvent e) {
+          setState(() {
+            switch (e.status) {
+              case OtaStatus.DOWNLOADING:
+                final p = double.tryParse(e.value ?? '');
+                _progress = p != null ? p / 100.0 : null;
+                _status = '下载中 ${e.value ?? ''}%';
+                break;
+              case OtaStatus.INSTALLING:
+                _progress = null;
+                _status = '准备安装，请在系统弹窗点「安装」';
+                break;
+              case OtaStatus.PERMISSION_NOT_GRANTED_ERROR:
+                _failed = true;
+                _status = '缺少安装权限：请允许本应用「安装未知应用」后重试';
+                break;
+              default:
+                _failed = true;
+                _status = '更新失败：${e.status} ${e.value ?? ''}';
+            }
+          });
+        },
+        onError: (e) {
+          setState(() {
+            _failed = true;
+            _status = '更新失败：$e';
+          });
+        },
+      );
+    } catch (e) {
+      setState(() {
+        _failed = true;
+        _status = '无法启动更新：$e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('更新'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(value: _progress),
+          const SizedBox(height: 12),
+          Text(_status, textAlign: TextAlign.center),
+        ],
+      ),
+      actions: [
+        if (_failed)
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭')),
+      ],
+    );
   }
 }
 

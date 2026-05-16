@@ -56,7 +56,12 @@ flutter pub get
 ```xml
 <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 ```
+
+（`REQUEST_INSTALL_PACKAGES` 是自更新装新 APK 用的；首次更新时系统会让用户
+开启「允许此来源安装应用」。）
 
 ### b. 在 `<application> ... </application>` 里面加 overlay 服务：
 
@@ -90,7 +95,29 @@ flutter build apk --release
 
 ---
 
-## 5. iOS 怎么办
+## 5. 发布新版本（自更新流程）
+
+App 不上商店，靠 GitHub Releases 自更新。App 启动时查
+`hres91101-create/info_share_app` 的最新 Release，比对版本号，有新版就弹窗问。
+
+每次发版步骤：
+
+1. 改 `pubspec.yaml` 的 `version:`，例如 `0.1.0+1` → `0.2.0+2`
+   （`+` 后面是 build number，每次递增）
+2. `flutter build apk --release`
+3. 去 GitHub repo → Releases → Draft a new release
+   - Tag 填 `v0.2.0`（**必须 `v` + 和 pubspec 一致的版本号**）
+   - 把 `app-release.apk` 拖进 assets
+   - 写更新说明（会显示在 app 的弹窗里）
+   - Publish
+4. 队友下次打开 app 就会被提示「发现新版本 0.2.0」，点立即更新即可
+   （首次会要求开启「允许安装未知应用」）
+
+> 一次性前置：app repo 要先推上 GitHub（见下方「GitHub 仓库」一节）。
+
+---
+
+## 6. iOS 怎么办
 
 - iOS 代码已经在 `lib/` 里（app 内悬浮按钮，**不能**浮在其他 app 上，这是 Apple 限制）
 - 编译 iOS 包**必须 macOS**。你在 Windows，两条路：
@@ -114,9 +141,28 @@ flutter build apk --release
 - **iOS**：app 内同款面板（Apple 不允许浮在其他 app 上，这是系统限制，
   连 FB Messenger 的 iOS 版也没有聊天头）
 
+- **自更新**：启动时查 GitHub Releases，有新版弹窗，确认后下载新 APK
+  并触发系统安装
+
+## GitHub 仓库（一次性，需要你操作）
+
+机器上没有 `gh` CLI，git 本身不能远程建仓，所以空 repo 要你手动建一次：
+
+1. 上 github.com → New repository
+2. 名字填 **`info_share_app`**，账号 `hres91101-create`
+3. **不要**勾 README / .gitignore / license（建空仓）
+4. 建好后告诉我，我执行：
+   ```
+   git remote add origin https://github.com/hres91101-create/info_share_app.git
+   git push -u origin main
+   ```
+
+仓库名写死在 `lib/services/updater.dart`（`owner`/`repo`），如果你用别的名字
+告诉我改。
+
 ## 之后可加（说一声就做）
 
-- 悬浮窗里直接显示实时数据 / 点开跳转具体塔
-- 上传图片（需要文件选择 + multipart）
+- 悬浮窗里点条目跳转到具体塔
+- App 内上传图片（文件选择 + multipart）
 - 推送通知（有人锁了你关注的塔）
 - iOS 云端打包 CI
