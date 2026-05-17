@@ -629,6 +629,15 @@ class _OverlayBubbleState extends State<_OverlayBubble>
   // bubble can only ever be moved somewhere it has already visibly been.
   double? _minX, _maxX, _minY, _maxY;
 
+  // Orientation the overlay engine last saw. The collapsed bubble window is a
+  // fixed 60×60, so its OWN size never flips on rotation — but the DISPLAY
+  // size does, and that's what we watch. When the user opens another app that
+  // forces landscape, the plugin's coordinate box changes under us; a bubble
+  // docked near the (long) portrait bottom/right is now past the short
+  // landscape edge and vanishes. On a flip we forget the stale calibration
+  // and re-home it to a corner that is on-screen in ANY orientation.
+  bool? _wasLandscape;
+
   @override
   void initState() {
     super.initState();
@@ -649,7 +658,52 @@ class _OverlayBubbleState extends State<_OverlayBubble>
     _maxY = _maxY == null ? c.dy : (c.dy > _maxY! ? c.dy : _maxY!);
   }
 
+  /// Read the DISPLAY size from the overlay engine (not the 60×60 window) and
+  /// fire a recovery the moment the device orientation flips. Cheap; runs on
+  /// the existing 150ms poll so we don't need a separate observer (and the
+  /// main Activity can't help here — it's stopped while another app is fg).
+  /// Returns true if it just handled a flip (caller should skip the rest of
+  /// this tick so a stale pre-move sample can't re-pollute the fresh bounds).
+  bool _checkRotation() {
+    Size? d;
+    try {
+      final views = WidgetsBinding.instance.platformDispatcher.views;
+      if (views.isNotEmpty) d = views.first.display.size;
+    } catch (_) {}
+    if (d == null || d.width <= 0 || d.height <= 0) return false;
+    final land = d.width > d.height;
+    if (_wasLandscape == null) {
+      _wasLandscape = land;
+      return false;
+    }
+    if (land == _wasLandscape) return false;
+    _wasLandscape = land;
+    _onScreenReconfigured();
+    return true;
+  }
+
+  Future<void> _onScreenReconfigured() async {
+    // Everything we self-calibrated belonged to the old orientation's
+    // coordinate box — drop it so it re-learns from scratch.
+    _minX = _maxX = _minY = _maxY = null;
+    _lastPos = null;
+    _moved = false;
+    try {
+      Diag.log('overlay_rotate', 're-home bubble after orientation change');
+    } catch (_) {}
+    try {
+      if (_expanded) {
+        await _fillScreen(); // panel must keep covering the new screen
+      } else {
+        // (0,0) is the one spot guaranteed on-screen in every orientation and
+        // independent of the plugin's unknown coordinate unit.
+        await FlutterOverlayWindow.moveOverlay(OverlayPosition(0.0, 0.0));
+      }
+    } catch (_) {}
+  }
+
   Future<void> _tick(Timer _) async {
+    if (_checkRotation()) return;
     if (_expanded || _snapping || _busyTick || _snapCtrl.isAnimating) return;
     _busyTick = true;
     try {
