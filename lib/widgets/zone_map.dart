@@ -97,14 +97,10 @@ class _ZoneMapViewState extends State<ZoneMapView> {
         Expanded(
           child: page.imagePath == null
               ? const Center(child: Text('这个城区还没有地图图片'))
-              : InteractiveViewer(
-                  minScale: 1,
-                  maxScale: 4,
-                  child: HotspotMap(
-                    page: page,
-                    settings: _data!.settings,
-                    onTapTower: widget.onTapTower,
-                  ),
+              : HotspotMap(
+                  page: page,
+                  settings: _data!.settings,
+                  onTapTower: widget.onTapTower,
                 ),
         ),
       ],
@@ -167,23 +163,28 @@ class _HotspotMapState extends State<HotspotMap> {
   Widget build(BuildContext context) {
     final src = widget.page.imagePath!;
     if (_aspect == null) {
-      return const SizedBox(
-          height: 220, child: Center(child: CircularProgressIndicator()));
+      return const Center(child: CircularProgressIndicator());
     }
     final s = widget.settings;
     final offsetX = widget.page.offsetXPct;
     final scaleX = widget.page.scaleX;
     final spots = widget.page.hotspots.where((h) => !h.hidden).toList();
 
-    return AspectRatio(
-      aspectRatio: _aspect!,
-      child: LayoutBuilder(
-        builder: (ctx, c) {
-          final w = c.maxWidth;
-          final h = c.maxHeight;
-          final d = s.outerPct / 100.0 * w;
-          final innerD = (s.innerPct / s.outerPct) * d;
-          return Stack(
+    return LayoutBuilder(
+      builder: (ctx, c) {
+        // Always size the map to FILL THE AVAILABLE HEIGHT and keep its native
+        // aspect ratio. We never scale it to the (narrow) viewport width, so a
+        // wide zone map is never squashed/distorted on a portrait screen — it
+        // simply overflows horizontally and the user pans left-right.
+        final vw = c.maxWidth;
+        final h = c.maxHeight;
+        final w = h * _aspect!;
+        final d = s.outerPct / 100.0 * w;
+        final innerD = (s.innerPct / s.outerPct) * d;
+        final map = SizedBox(
+          width: w,
+          height: h,
+          child: Stack(
             children: [
               Positioned.fill(
                 child: Image.network(src,
@@ -256,9 +257,21 @@ class _HotspotMapState extends State<HotspotMap> {
                 );
               }),
             ],
-          );
-        },
-      ),
+          ),
+        );
+        // Pan freely (horizontal drag reveals the rest of a wide map) and keep
+        // pinch-zoom. constrained:false → the map keeps its own w×h instead of
+        // being shrunk to the viewport, so it never distorts.
+        return InteractiveViewer(
+          constrained: false,
+          minScale: 1,
+          maxScale: 4,
+          boundaryMargin: EdgeInsets.symmetric(
+              horizontal: (vw > w ? (vw - w) / 2 : 0.0) + 12.0,
+              vertical: 12.0),
+          child: map,
+        );
+      },
     );
   }
 }
